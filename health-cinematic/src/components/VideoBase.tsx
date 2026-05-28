@@ -1,35 +1,41 @@
 import React from "react";
-import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { Video } from "@remotion/media";
-import { staticFile } from "remotion";
+import {
+  AbsoluteFill,
+  interpolate,
+  OffthreadVideo,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
 
 export const VideoBase: React.FC = () => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const { durationInFrames, width, height } = useVideoConfig();
 
-  // Slow push-in: scale 1.0 → 1.055 over the full duration
-  const scale = interpolate(frame, [0, durationInFrames], [1.0, 1.055], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  // Slight upward drift to keep the face centered as we zoom in
-  const translateY = interpolate(frame, [0, durationInFrames], [0, -20], {
+  // Slow cinematic push-in over full duration
+  const scale = interpolate(frame, [0, durationInFrames], [1.0, 1.07], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
   return (
-    <AbsoluteFill style={{ overflow: "hidden" }}>
+    <AbsoluteFill style={{ overflow: "hidden", background: "#000" }}>
       <AbsoluteFill
         style={{
-          transform: `scale(${scale}) translateY(${translateY}px)`,
-          transformOrigin: "50% 40%",
+          transform: `scale(${scale})`,
+          transformOrigin: "50% 42%",
         }}
       >
-        <Video
+        <OffthreadVideo
           src={staticFile("doctor.mp4")}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width,
+            height,
+            objectFit: "cover",
+          }}
         />
       </AbsoluteFill>
     </AbsoluteFill>

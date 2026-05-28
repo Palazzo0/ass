@@ -7,33 +7,37 @@ import { DustMotes } from "./components/DustMotes";
 import { ArteryOverlay } from "./components/ArteryOverlay";
 import { BloodCells } from "./components/BloodCells";
 import { HeartbeatGlow } from "./components/HeartbeatGlow";
+import { CholesterolParticles } from "./components/CholesterolParticles";
 import { AtmosphericFade } from "./components/AtmosphericFade";
 
 export const CinematicOverlay: React.FC = () => {
   return (
     <AbsoluteFill style={{ background: "#000", overflow: "hidden" }}>
-      {/* Layer 1: Source footage with push-in zoom */}
+      {/* 1. Source footage — fills full canvas with cinematic push-in */}
       <VideoBase />
 
-      {/* Layer 2: Dark cinematic vignette */}
+      {/* 2. Cinematic vignette — dark edges, phase-driven */}
       <Vignette />
 
-      {/* Layer 3: Drifting smoke atmosphere */}
+      {/* 3. Drifting smoke atmosphere */}
       <SmokeParticles />
 
-      {/* Layer 4: Warm floating dust motes */}
+      {/* 4. Warm floating dust motes in light shafts */}
       <DustMotes />
 
-      {/* Layer 5: Artery texture overlay with narrowing effect */}
+      {/* 5. Transparent artery network — emerges, glows, narrows */}
       <ArteryOverlay />
 
-      {/* Layer 6: Blood cell particles */}
+      {/* 6. Flowing blood cell particles — slow in phase 3 */}
       <BloodCells />
 
-      {/* Layer 7: Heartbeat glow pulse */}
+      {/* 7. Heartbeat pulse glow — builds in phase 2 */}
       <HeartbeatGlow />
 
-      {/* Layer 8: Atmospheric entry/exit fades + warm grade */}
+      {/* 8. Cholesterol particles — appear in phase 2 */}
+      <CholesterolParticles />
+
+      {/* 9. Atmospheric fades and cinematic grade */}
       <AtmosphericFade />
     </AbsoluteFill>
   );

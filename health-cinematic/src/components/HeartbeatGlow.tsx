@@ -1,64 +1,66 @@
 import React from "react";
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { PHASE_1_END, PHASE_2_END, PHASE_3_END, getPhaseProgress } from "../utils/phases";
 
-// 72 bpm = 1.2s per beat = 36 frames at 30fps
-const BEAT_INTERVAL = 36;
+// 72 bpm at 30fps = 36 frames per beat
+const BEAT_FRAMES = 36;
 
-// Create a sharp attack + slow decay for each heartbeat
-const heartbeatPulse = (frame: number): number => {
-  const phase = ((frame % BEAT_INTERVAL) / BEAT_INTERVAL);
-  // Two beats per measure for realism (lub-dub)
+const pulse = (frame: number): number => {
+  const phase = (frame % BEAT_FRAMES) / BEAT_FRAMES;
+  // lub (0.0 → 0.5) and dub (0.5 → 1.0)
   const lub = phase < 0.5 ? phase * 2 : 0;
   const dub = phase >= 0.5 ? (phase - 0.5) * 2 : 0;
 
-  const lubPulse = interpolate(lub, [0, 0.08, 0.5], [0, 1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const dubPulse = interpolate(dub, [0, 0.08, 0.5], [0, 0.55, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  return Math.max(lubPulse, dubPulse);
+  const lubP = interpolate(lub, [0, 0.10, 1], [0, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const dubP = interpolate(dub, [0, 0.10, 1], [0, 0.6, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return Math.max(lubP, dubP);
 };
 
 export const HeartbeatGlow: React.FC = () => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
-  const pulse = heartbeatPulse(frame);
+  const beat = pulse(frame);
 
-  // Heartbeat builds in intensity toward the warning climax
-  const intensityRamp = interpolate(
-    frame,
-    [0, durationInFrames * 0.3, durationInFrames * 0.7, durationInFrames],
-    [0.3, 0.5, 0.85, 0.7],
+  // Phase 1: barely present
+  const p1 = getPhaseProgress(frame, durationInFrames, 0, PHASE_1_END);
+  // Phase 2: strong, alarming glow
+  const p2 = getPhaseProgress(frame, durationInFrames, 0.38, PHASE_2_END);
+  // Phase 3: fades to stillness
+  const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, PHASE_3_END);
+
+  const intensity = interpolate(
+    p2,
+    [0, 0.3, 0.8, 1],
+    [0.08, 0.22, 0.32, 0.28],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
+  const endFade = interpolate(p3, [0, 0.6, 1], [1, 0.5, 0.2], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const p1Ramp  = interpolate(p1, [0, 1], [0, 0.08], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  const opacity = pulse * 0.12 * intensityRamp;
+  const glowOpacity  = beat * (p1Ramp + intensity) * endFade;
+  const rimOpacity   = beat * intensity * 0.35 * endFade;
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
-      {/* Primary glow — warm amber/red centered slightly below mid (chest area) */}
+      {/* Central chest glow */}
       <div
         style={{
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(ellipse 60% 40% at 50% 65%, rgba(220,80,40,1) 0%, rgba(180,40,20,0.5) 35%, transparent 75%)",
-          opacity,
+            "radial-gradient(ellipse 65% 45% at 50% 62%, rgba(230,70,30,1) 0%, rgba(190,30,10,0.55) 40%, transparent 78%)",
+          opacity: glowOpacity,
         }}
       />
-      {/* Secondary subtle rim on edges for dramatic feel */}
+      {/* Outer rim pulse */}
       <div
         style={{
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(ellipse at 50% 50%, transparent 50%, rgba(120,20,20,0.6) 100%)",
-          opacity: pulse * 0.06 * intensityRamp,
+            "radial-gradient(ellipse at 50% 50%, transparent 45%, rgba(140,10,10,0.7) 100%)",
+          opacity: rimOpacity,
         }}
       />
     </AbsoluteFill>

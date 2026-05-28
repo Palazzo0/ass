@@ -32,14 +32,14 @@ export const HeartbeatGlow: React.FC = () => {
   const intensity = interpolate(
     p2,
     [0, 0.3, 0.8, 1],
-    [0.08, 0.22, 0.32, 0.28],
+    [0.10, 0.30, 0.48, 0.42],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
-  const endFade = interpolate(p3, [0, 0.6, 1], [1, 0.5, 0.2], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const p1Ramp  = interpolate(p1, [0, 1], [0, 0.08], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const endFade = interpolate(p3, [0, 0.6, 1], [1, 0.45, 0.15], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const p1Ramp  = interpolate(p1, [0, 1], [0, 0.10], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   const glowOpacity  = beat * (p1Ramp + intensity) * endFade;
-  const rimOpacity   = beat * intensity * 0.35 * endFade;
+  const rimOpacity   = beat * intensity * 0.55 * endFade;
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
@@ -49,7 +49,7 @@ export const HeartbeatGlow: React.FC = () => {
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(ellipse 65% 45% at 50% 62%, rgba(230,70,30,1) 0%, rgba(190,30,10,0.55) 40%, transparent 78%)",
+            "radial-gradient(ellipse 70% 50% at 50% 60%, rgba(240,60,20,1) 0%, rgba(200,30,10,0.65) 38%, transparent 72%)",
           opacity: glowOpacity,
         }}
       />

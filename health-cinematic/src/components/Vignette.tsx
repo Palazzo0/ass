@@ -18,15 +18,15 @@ export const Vignette: React.FC = () => {
   const p2 = getPhaseProgress(frame, durationInFrames, 0.38, PHASE_2_END);
   const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, PHASE_3_END);
 
-  const baseOpacity = interpolate(p1, [0, 1], [0.5, 0.65], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const midBoost  = interpolate(p2, [0, 1], [0, 0.10], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const endBoost  = interpolate(p3, [0, 1], [0, 0.12], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const baseOpacity = interpolate(p1, [0, 1], [0.58, 0.72], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const midBoost  = interpolate(p2, [0, 1], [0, 0.13], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const endBoost  = interpolate(p3, [0, 1], [0, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const breathe   = Math.sin((frame / fps) * 0.5) * 0.01;
 
   const vignetteOpacity = baseOpacity + midBoost + endBoost + breathe;
 
   // Red tint that builds in phase 2
-  const redOpacity = interpolate(p2, [0, 1], [0, 0.12], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const redOpacity = interpolate(p2, [0, 1], [0, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>

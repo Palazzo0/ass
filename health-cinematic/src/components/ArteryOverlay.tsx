@@ -7,6 +7,14 @@ import {
   getPhaseProgress,
 } from "../utils/phases";
 
+const BEAT_FRAMES = 36;
+function beatPulse(frame: number): number {
+  const phase = (frame % BEAT_FRAMES) / BEAT_FRAMES;
+  if (phase < 0.14) return interpolate(phase, [0, 0.07, 0.14], [0, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  if (phase >= 0.5 && phase < 0.62) return interpolate(phase, [0.5, 0.56, 0.62], [0, 0.55, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return 0;
+}
+
 const ARTERY_PATHS = [
   // Main right descending vessel
   "M 960 0 C 940 200 980 400 960 600 C 940 800 920 1000 900 1200 C 880 1400 860 1600 870 1920",
@@ -38,31 +46,34 @@ export const ArteryOverlay: React.FC = () => {
   const p2 = getPhaseProgress(frame, durationInFrames, 0.38, PHASE_2_END);
   const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, PHASE_3_END);
 
+  const beat = beatPulse(frame);
+
   // Phase 1: arteries emerge gradually
-  const phase1Opacity = interpolate(p1, [0, 0.3, 1], [0, 0.5, 0.75], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const phase1Opacity = interpolate(p1, [0, 0.25, 1], [0, 0.55, 0.82], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   // Phase 2: become more vivid and glowing
-  const phase2Boost = interpolate(p2, [0, 0.5, 1], [0, 0.15, 0.20], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const phase2Boost = interpolate(p2, [0, 0.5, 1], [0, 0.18, 0.25], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   // Phase 3: stay visible but darken
-  const phase3Shift = interpolate(p3, [0, 1], [0, -0.10], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const phase3Shift = interpolate(p3, [0, 1], [0, -0.12], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   const globalOpacity = Math.max(0, phase1Opacity + phase2Boost + phase3Shift);
 
-  // Stroke width — narrows in phase 3 (simulating blockage)
-  const narrowProgress = interpolate(p3, [0, 1], [1, 0.3], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const mainStroke   = (3.5 + interpolate(p2, [0, 1], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowProgress;
-  const branchStroke = (2.0 + interpolate(p2, [0, 1], [0, 0.5], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowProgress;
+  // Stroke width — narrows dramatically in phase 3
+  const narrowProgress = interpolate(p3, [0, 0.6, 1], [1, 0.45, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const mainStroke   = (4.0 + interpolate(p2, [0, 1], [0, 1.2], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowProgress;
+  const branchStroke = (2.2 + interpolate(p2, [0, 1], [0, 0.6], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowProgress;
 
   // Color: warm red → bright red in phase 2 → dark in phase 3
-  const redR = Math.round(interpolate(p2, [0, 1], [180, 220], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
-  const redA = interpolate(p2, [0, 1], [0.35, 0.55], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const redR = Math.round(interpolate(p2, [0, 1], [185, 228], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  const redA = interpolate(p2, [0, 1], [0.40, 0.65], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Glow effect on main vessels in phase 2
-  const glowOpacity = interpolate(p2, [0, 0.4, 1], [0, 0.18, 0.22], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Glow — beat-synced in phase 2
+  const baseGlow = interpolate(p2, [0, 0.4, 1], [0, 0.20, 0.28], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const glowOpacity = baseGlow + beat * interpolate(p2, [0, 1], [0, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   // Plaque darkening in phase 3
-  const plaqueOpacity = interpolate(p3, [0, 1], [0, 0.65], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const plaqueOpacity = interpolate(p3, [0, 0.7, 1], [0, 0.55, 0.80], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none", opacity: globalOpacity }}>

@@ -1,40 +1,39 @@
 import React from "react";
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { seededRange } from "../utils/noise";
-import { getPhaseProgress, PHASE_2_END } from "../utils/phases";
+import { PHASE_2_END, PHASE_3_END, getPhaseProgress } from "../utils/phases";
 
-const SMOKE_COUNT = 10;
+const COUNT = 12;
 
-const BLOBS = Array.from({ length: SMOKE_COUNT }, (_, i) => ({
-  startX: seededRange(i * 7 + 1, 3, 97),
-  startY: seededRange(i * 7 + 2, 60, 110),
-  size:   seededRange(i * 7 + 3, 160, 320),
-  speed:  seededRange(i * 7 + 4, 350, 700),
-  driftX: seededRange(i * 7 + 5, -8, 8),
-  opacity: seededRange(i * 7 + 6, 0.07, 0.16),
-  phase:  seededRange(i * 7 + 7, 0, 300),
-  blur:   seededRange(i * 7 + 8, 50, 90),
+const BLOBS = Array.from({ length: COUNT }, (_, i) => ({
+  x:       seededRange(i * 7 + 1, 5, 95),
+  y:       seededRange(i * 7 + 2, 10, 90),
+  size:    seededRange(i * 7 + 3, 220, 420),
+  speedY:  seededRange(i * 7 + 4, -0.008, -0.002),
+  speedX:  seededRange(i * 7 + 5, -0.003, 0.003),
+  opacity: seededRange(i * 7 + 6, 0.07, 0.17),
+  phase:   seededRange(i * 7 + 7, 0, 900),
+  hue:     seededRange(i * 7 + 8, 0, 1),
 }));
 
 export const SmokeParticles: React.FC = () => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
-  const globalFade = interpolate(frame, [0, 30], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-
-  // Smoke intensifies slightly in phase 2, then lingers in phase 3
-  const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, 1.0);
-  const phaseMultiplier = 1 + interpolate(p3, [0, 1], [0, 0.3], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const globalFade = interpolate(frame, [0, 45], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, PHASE_3_END);
+  const densityBoost = interpolate(p3, [0, 1], [1, 1.45], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none", overflow: "hidden" }}>
-      {BLOBS.map((blob, i) => {
-        const t = ((frame + blob.phase) % blob.speed) / blob.speed;
-        const y = blob.startY - t * 130;
-        const x = blob.startX + Math.sin(t * Math.PI * 2) * blob.driftX;
-        const fadeIn  = Math.min(1, t * 4);
-        const fadeOut = Math.min(1, (1 - t) * 3);
-        const opacity = blob.opacity * fadeIn * fadeOut * globalFade * phaseMultiplier;
+      {BLOBS.map((b, i) => {
+        const t = (frame + b.phase) % 900;
+        const y = b.y + b.speedY * t;
+        const x = b.x + b.speedX * t + Math.sin(t * 0.008 + b.phase * 0.5) * 3;
+        const pulse = 0.7 + 0.3 * Math.sin(frame * 0.015 + b.phase * 0.4);
+        const r = Math.round(110 + b.hue * 35);
+        const g = Math.round(95 + b.hue * 30);
+        const bC = Math.round(85 + b.hue * 20);
 
         return (
           <div
@@ -43,13 +42,12 @@ export const SmokeParticles: React.FC = () => {
               position: "absolute",
               left: `${x}%`,
               top: `${y}%`,
-              width: blob.size,
-              height: blob.size,
+              width: b.size,
+              height: b.size * 0.65,
               borderRadius: "50%",
-              background:
-                "radial-gradient(circle, rgba(200,180,160,0.85) 0%, rgba(160,140,120,0.35) 50%, transparent 100%)",
-              filter: `blur(${blob.blur}px)`,
-              opacity,
+              background: `rgba(${r},${g},${bC},0.55)`,
+              filter: `blur(${b.size * 0.22}px)`,
+              opacity: b.opacity * pulse * globalFade * densityBoost,
               transform: "translate(-50%, -50%)",
             }}
           />

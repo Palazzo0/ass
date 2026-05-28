@@ -7,36 +7,35 @@ import {
   getPhaseProgress,
 } from "../utils/phases";
 
+// Beat-pulse helper — returns 0-1 matching lub-dub rhythm
 const BEAT_FRAMES = 36;
 function beatPulse(frame: number): number {
-  const phase = (frame % BEAT_FRAMES) / BEAT_FRAMES;
-  if (phase < 0.14) return interpolate(phase, [0, 0.07, 0.14], [0, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  if (phase >= 0.5 && phase < 0.62) return interpolate(phase, [0.5, 0.56, 0.62], [0, 0.55, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const ph = (frame % BEAT_FRAMES) / BEAT_FRAMES;
+  if (ph < 0.14) return interpolate(ph, [0, 0.07, 0.14], [0, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  if (ph >= 0.50 && ph < 0.62) return interpolate(ph, [0.50, 0.56, 0.62], [0, 0.55, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return 0;
 }
 
-const ARTERY_PATHS = [
-  // Main right descending vessel
-  "M 960 0 C 940 200 980 400 960 600 C 940 800 920 1000 900 1200 C 880 1400 860 1600 870 1920",
-  // Right branch 1
-  "M 940 350 C 900 380 860 400 820 430 C 780 460 740 490 700 510",
-  // Right branch 2
-  "M 920 700 C 870 730 820 760 770 800 C 720 840 680 880 650 920",
-  // Right small branch
-  "M 895 520 C 855 545 820 570 790 600",
-  // Left descending vessel
-  "M 120 0 C 140 200 100 400 120 600 C 140 800 160 1000 180 1200 C 200 1400 220 1600 210 1920",
-  // Left branch 1
-  "M 140 300 C 190 340 240 370 290 400 C 340 430 390 450 430 470",
-  // Left branch 2
-  "M 160 650 C 220 690 280 730 340 770 C 400 810 450 850 480 890",
+// pathLength="1" trick: dashArray={`${d} ${1-d}`} reveals path 0→d from start
+const drawDash = (d: number) => `${Math.max(0.0001, d).toFixed(5)} ${Math.max(0.0001, 1 - d + 0.0001).toFixed(5)}`;
+
+const PATHS = {
+  // Main descending vessels (left + right frame edges)
+  mainRight: "M 985 0 C 962 280 1005 560 980 840 C 955 1120 935 1400 948 1920",
+  mainLeft:  "M 95 0 C 118 280 75 560 100 840 C 125 1120 148 1400 135 1920",
+  // Branches from right vessel
+  brR1: "M 968 280 C 920 310 872 330 820 352 C 768 374 720 390 672 400",
+  brR2: "M 955 630 C 898 668 840 706 782 748 C 724 790 678 832 648 872",
+  brR3: "M 962 440 C 915 466 872 492 834 522",
+  // Branches from left vessel
+  brL1: "M 108 260 C 162 295 218 320 274 344 C 330 368 386 386 432 398",
+  brL2: "M 122 590 C 185 628 248 668 312 710 C 376 752 428 794 460 836",
+  brL3: "M 115 410 C 165 436 212 462 254 492",
   // Bottom capillary network
-  "M 200 1700 C 300 1680 400 1700 540 1720 C 660 1740 780 1730 900 1710",
-  "M 350 1750 C 420 1770 490 1760 560 1750 C 630 1740 700 1755 770 1745",
-  // Lower right cluster
-  "M 780 1600 C 820 1620 850 1650 870 1680 C 890 1710 895 1740 880 1770",
-  "M 830 1640 C 860 1655 880 1670 895 1700",
-];
+  cap1: "M 185 1720 C 300 1700 430 1718 560 1730 C 688 1742 808 1728 912 1712",
+  cap2: "M 340 1768 C 418 1784 496 1774 574 1764 C 652 1754 728 1769 804 1759",
+  capR: "M 795 1615 C 838 1638 866 1668 882 1700 C 898 1732 900 1762 884 1792",
+};
 
 export const ArteryOverlay: React.FC = () => {
   const frame = useCurrentFrame();
@@ -45,101 +44,102 @@ export const ArteryOverlay: React.FC = () => {
   const p1 = getPhaseProgress(frame, durationInFrames, 0, PHASE_1_END);
   const p2 = getPhaseProgress(frame, durationInFrames, 0.38, PHASE_2_END);
   const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, PHASE_3_END);
-
   const beat = beatPulse(frame);
 
-  // Phase 1: arteries emerge gradually
-  const phase1Opacity = interpolate(p1, [0, 0.25, 1], [0, 0.55, 0.82], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Phase 1: arteries draw themselves progressively (scan effect)
+  const drawProgress = interpolate(p1, [0, 0.75], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Phase 2: become more vivid and glowing
-  const phase2Boost = interpolate(p2, [0, 0.5, 1], [0, 0.18, 0.25], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Global opacity arc
+  const globalOpacity =
+    interpolate(p1, [0, 0.2, 1], [0, 0.55, 0.82], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) +
+    interpolate(p2, [0, 0.5, 1], [0, 0.12, 0.20], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) +
+    interpolate(p3, [0, 1], [0, -0.15], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Phase 3: stay visible but darken
-  const phase3Shift = interpolate(p3, [0, 1], [0, -0.12], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Stroke widths: broaden in phase 2, dramatically narrow in phase 3
+  const narrowFactor = interpolate(p3, [0, 0.5, 1], [1, 0.50, 0.14], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const mainW   = (4.5 + interpolate(p2, [0, 1], [0, 1.4], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowFactor;
+  const branchW = (2.5 + interpolate(p2, [0, 1], [0, 0.8], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowFactor;
 
-  const globalOpacity = Math.max(0, phase1Opacity + phase2Boost + phase3Shift);
+  // Color: dark red → bright alert red in phase 2 → bruised purple-dark in phase 3
+  const redR   = Math.round(interpolate(p2, [0, 1], [188, 235], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  const redG   = Math.round(interpolate(p3, [0, 1], [48, 18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  const redA   = interpolate(p2, [0, 1], [0.42, 0.72], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Stroke width — narrows dramatically in phase 3
-  const narrowProgress = interpolate(p3, [0, 0.6, 1], [1, 0.45, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const mainStroke   = (4.0 + interpolate(p2, [0, 1], [0, 1.2], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowProgress;
-  const branchStroke = (2.2 + interpolate(p2, [0, 1], [0, 0.6], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * narrowProgress;
+  // Glow: beat-synced pulse in phase 2
+  const baseGlow = interpolate(p2, [0, 0.3, 1], [0, 0.22, 0.32], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const glowA = Math.max(0, baseGlow + beat * interpolate(p2, [0, 1], [0, 0.22], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
 
-  // Color: warm red → bright red in phase 2 → dark in phase 3
-  const redR = Math.round(interpolate(p2, [0, 1], [185, 228], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
-  const redA = interpolate(p2, [0, 1], [0.40, 0.65], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Plaque / blockage fill growing in phase 3
+  const plaqueA = interpolate(p3, [0, 0.5, 1], [0, 0.55, 0.88], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Glow — beat-synced in phase 2
-  const baseGlow = interpolate(p2, [0, 0.4, 1], [0, 0.20, 0.28], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const glowOpacity = baseGlow + beat * interpolate(p2, [0, 1], [0, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const mainDash   = drawDash(drawProgress);
+  const branchDash = drawDash(interpolate(p1, [0.05, 0.80], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  const capDash    = drawDash(interpolate(p1, [0.15, 0.95], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
 
-  // Plaque darkening in phase 3
-  const plaqueOpacity = interpolate(p3, [0, 0.7, 1], [0, 0.55, 0.80], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const stroke = `rgba(${redR},${redG},45,${redA})`;
+  const brStroke = `rgba(155,38,38,${redA * 0.82})`;
 
   return (
-    <AbsoluteFill style={{ pointerEvents: "none", opacity: globalOpacity }}>
-      <svg
-        width={width}
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ position: "absolute", inset: 0 }}
-      >
-        {/* Glow layer behind main vessels */}
-        {[0, 4].map((idx) => (
-          <path
-            key={`glow-${idx}`}
-            d={ARTERY_PATHS[idx]}
-            fill="none"
-            stroke={`rgba(255,60,60,${glowOpacity})`}
-            strokeWidth={mainStroke * 3.5}
+    <AbsoluteFill style={{ pointerEvents: "none", opacity: Math.max(0, globalOpacity) }}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ position: "absolute", inset: 0 }}>
+
+        {/* ── Glow halos on main vessels ── */}
+        {[PATHS.mainRight, PATHS.mainLeft].map((d, i) => (
+          <path key={`glow-${i}`} d={d} fill="none"
+            pathLength={1} strokeDasharray={mainDash} strokeDashoffset={0}
+            stroke={`rgba(255,45,25,${glowA})`}
+            strokeWidth={mainW * 4}
             strokeLinecap="round"
-            style={{ filter: "blur(8px)" }}
+            style={{ filter: "blur(10px)" }}
           />
         ))}
 
-        {/* Main vessels */}
-        {[0, 4].map((idx) => (
-          <path
-            key={`main-${idx}`}
-            d={ARTERY_PATHS[idx]}
-            fill="none"
-            stroke={`rgba(${redR},50,50,${redA})`}
-            strokeWidth={mainStroke}
+        {/* ── Main descending vessels ── */}
+        {[PATHS.mainRight, PATHS.mainLeft].map((d, i) => (
+          <path key={`main-${i}`} d={d} fill="none"
+            pathLength={1} strokeDasharray={mainDash} strokeDashoffset={0}
+            stroke={stroke}
+            strokeWidth={mainW}
             strokeLinecap="round"
           />
         ))}
 
-        {/* Branches */}
-        {[1, 2, 3, 5, 6].map((idx) => (
-          <path
-            key={`branch-${idx}`}
-            d={ARTERY_PATHS[idx]}
-            fill="none"
-            stroke={`rgba(160,45,45,${redA * 0.8})`}
-            strokeWidth={branchStroke}
+        {/* ── Branch vessels ── */}
+        {[PATHS.brR1, PATHS.brR2, PATHS.brR3, PATHS.brL1, PATHS.brL2, PATHS.brL3].map((d, i) => (
+          <path key={`br-${i}`} d={d} fill="none"
+            pathLength={1} strokeDasharray={branchDash} strokeDashoffset={0}
+            stroke={brStroke}
+            strokeWidth={branchW}
             strokeLinecap="round"
           />
         ))}
 
-        {/* Fine capillaries */}
-        {[7, 8, 9, 10].map((idx) => (
-          <path
-            key={`cap-${idx}`}
-            d={ARTERY_PATHS[idx]}
-            fill="none"
-            stroke="rgba(140,40,40,0.30)"
-            strokeWidth={1.2}
+        {/* ── Fine capillaries ── */}
+        {[PATHS.cap1, PATHS.cap2, PATHS.capR].map((d, i) => (
+          <path key={`cap-${i}`} d={d} fill="none"
+            pathLength={1} strokeDasharray={capDash} strokeDashoffset={0}
+            stroke="rgba(130,35,35,0.32)"
+            strokeWidth={1.4}
             strokeLinecap="round"
           />
         ))}
 
-        {/* Plaque blockage overlay */}
-        {[0, 4].map((idx) => (
-          <path
-            key={`plaque-${idx}`}
-            d={ARTERY_PATHS[idx]}
-            fill="none"
-            stroke={`rgba(15,5,5,${plaqueOpacity})`}
-            strokeWidth={mainStroke * 0.55}
+        {/* ── Plaque / blockage overlay (dark centre fill) ── */}
+        {[PATHS.mainRight, PATHS.mainLeft].map((d, i) => (
+          <path key={`plaque-${i}`} d={d} fill="none"
+            pathLength={1} strokeDasharray={mainDash} strokeDashoffset={0}
+            stroke={`rgba(8,0,0,${plaqueA})`}
+            strokeWidth={mainW * 0.62}
+            strokeLinecap="round"
+          />
+        ))}
+
+        {/* ── Phase 3: branch occlusion (branches fade to near-invisible) ── */}
+        {[PATHS.brR2, PATHS.brR3, PATHS.brL2, PATHS.brL3].map((d, i) => (
+          <path key={`occlude-${i}`} d={d} fill="none"
+            pathLength={1} strokeDasharray={branchDash} strokeDashoffset={0}
+            stroke={`rgba(4,0,0,${plaqueA * 0.75})`}
+            strokeWidth={branchW * 0.55}
             strokeLinecap="round"
           />
         ))}

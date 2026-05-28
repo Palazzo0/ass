@@ -8,8 +8,11 @@ import { ArteryOverlay } from "./components/ArteryOverlay";
 import { BloodCells } from "./components/BloodCells";
 import { HeartbeatGlow } from "./components/HeartbeatGlow";
 import { CholesterolParticles } from "./components/CholesterolParticles";
-import { AtmosphericFade } from "./components/AtmosphericFade";
 import { ECGLine } from "./components/ECGLine";
+import { BlockageFlash } from "./components/BlockageFlash";
+import { AtmosphericFade } from "./components/AtmosphericFade";
+import { FilmGrain } from "./components/FilmGrain";
+import { AudioLayer } from "./components/AudioLayer";
 
 export const CinematicOverlay: React.FC = () => {
   return (
@@ -17,32 +20,41 @@ export const CinematicOverlay: React.FC = () => {
       {/* 1. Source footage — fills full canvas with cinematic push-in */}
       <VideoBase />
 
-      {/* 2. Cinematic vignette — dark edges, phase-driven */}
-      <Vignette />
-
-      {/* 3. Drifting smoke atmosphere */}
+      {/* 2. Drifting smoke atmosphere */}
       <SmokeParticles />
 
-      {/* 4. Warm floating dust motes in light shafts */}
+      {/* 3. Warm floating dust motes */}
       <DustMotes />
 
-      {/* 5. Transparent artery network — emerges, glows, narrows */}
+      {/* 4. Transparent artery network — draws progressively, glows, narrows */}
       <ArteryOverlay />
 
-      {/* 6. Flowing blood cell particles — slow in phase 3 */}
+      {/* 5. Flowing blood cell particles — slows to crawl in phase 3 */}
       <BloodCells />
 
-      {/* 7. Heartbeat pulse glow — builds in phase 2 */}
+      {/* 6. Heartbeat pulse glow — builds in phase 2 */}
       <HeartbeatGlow />
 
-      {/* 8. Cholesterol particles — appear in phase 2 */}
+      {/* 7. Cholesterol particles — float phase 1, fly toward camera phase 2 */}
       <CholesterolParticles />
 
-      {/* 9. ECG trace — appears in phase 2, synced to heartbeat */}
+      {/* 8. ECG trace — appears in phase 2 */}
       <ECGLine />
 
-      {/* 10. Atmospheric fades and cinematic grade */}
+      {/* 9. Red blockage flash at "stroke or heart attack" moment */}
+      <BlockageFlash />
+
+      {/* 10. Cinematic vignette — dark edges, red tint in phase 2 */}
+      <Vignette />
+
+      {/* 11. Very subtle film grain for cinematic texture */}
+      <FilmGrain />
+
+      {/* 12. Atmospheric fades, warm grade, phase 3 desaturation, fade in/out */}
       <AtmosphericFade />
+
+      {/* 13. Audio: drone + heartbeat loop + boom + tension riser */}
+      <AudioLayer />
     </AbsoluteFill>
   );
 };

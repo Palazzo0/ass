@@ -1,6 +1,7 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
 import { VideoBase } from "./components/VideoBase";
+import { SilhouetteOverlay } from "./components/SilhouetteOverlay";
 import { Vignette } from "./components/Vignette";
 import { SmokeParticles } from "./components/SmokeParticles";
 import { DustMotes } from "./components/DustMotes";
@@ -20,13 +21,16 @@ export const CinematicOverlay: React.FC = () => {
       {/* 1. Source footage — fills full canvas with cinematic push-in */}
       <VideoBase />
 
-      {/* 2. Drifting smoke atmosphere */}
+      {/* 2. Lifestyle silhouette scenes — sync to opening narration */}
+      <SilhouetteOverlay />
+
+      {/* 3. Drifting smoke atmosphere */}
       <SmokeParticles />
 
-      {/* 3. Warm floating dust motes */}
+      {/* 4. Warm floating dust motes */}
       <DustMotes />
 
-      {/* 4. Transparent artery network — draws progressively, glows, narrows */}
+      {/* 5. Transparent artery network — draws progressively, glows, narrows */}
       <ArteryOverlay />
 
       {/* 5. Flowing blood cell particles — slows to crawl in phase 3 */}

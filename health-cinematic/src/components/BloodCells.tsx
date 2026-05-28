@@ -45,6 +45,22 @@ export const BloodCells: React.FC = () => {
   const p2 = getPhaseProgress(frame, durationInFrames, 0.38, PHASE_2_END);
   const phase2Boost = interpolate(p2, [0, 1], [1, 1.7], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
+  // Pre-flash blood RUSH: cells surge faster and grow just before the impact
+  const flashFrame = Math.round(durationInFrames * 0.645);
+  const rushSpeed = interpolate(
+    frame,
+    [flashFrame - 35, flashFrame - 10, flashFrame, flashFrame + 5],
+    [1, 3.8, 2.2, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+  // Cells grow larger during rush (flying toward camera feel)
+  const rushScale = interpolate(
+    frame,
+    [flashFrame - 35, flashFrame - 10, flashFrame, flashFrame + 5],
+    [1, 2.2, 1.5, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
   // Phase 3: cells slow to a crawl, fade away (blocked flow)
   const p3 = getPhaseProgress(frame, durationInFrames, PHASE_2_END, PHASE_3_END);
   const phase3SpeedFactor = interpolate(p3, [0, 0.5, 1], [1, 0.4, 0.18], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
@@ -54,10 +70,11 @@ export const BloodCells: React.FC = () => {
     <AbsoluteFill style={{ pointerEvents: "none", overflow: "hidden" }}>
       {CELLS.map((cell, i) => {
         const path = PATHS[cell.pathIdx % PATHS.length];
-        const effectiveSpeed = cell.speed / phase3SpeedFactor;
+        const effectiveSpeed = cell.speed / (phase3SpeedFactor * rushSpeed);
         const t = (frame / effectiveSpeed + cell.phase) % 1;
         const [x, y] = lerpPath(path.pts, t);
         const opacity = cell.opacity * globalFade * phase2Boost * phase3Fade;
+        const scaledSize = cell.size * rushScale;
 
         return (
           <div
@@ -66,8 +83,8 @@ export const BloodCells: React.FC = () => {
               position: "absolute",
               left: `${x}%`,
               top: `${y}%`,
-              width: cell.size,
-              height: cell.size * 0.68,
+              width: scaledSize,
+              height: scaledSize * 0.68,
               borderRadius: "50%",
               background:
                 "radial-gradient(circle at 38% 32%, rgba(238,85,72,1), rgba(168,22,22,0.88))",

@@ -19,6 +19,15 @@ from pathlib import Path
 
 import requests
 
+# Load .env if present
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 # ─── NARRATION SCRIPT ─────────────────────────────────────────────────────────
 # Full word-for-word script matching the motion graphics timestamps.
 # Adjust timing gaps via the <break> tags or by splitting into segments.

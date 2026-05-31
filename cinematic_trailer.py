@@ -42,8 +42,8 @@ W, H = 1080, 1920
 FPS = 24
 WAVESPEED_BASE = "https://api.wavespeed.ai/api/v2"
 
-T2I_MODEL = "wavespeed-ai/nano-banana-pro"        # hyper-realistic stills
-I2V_MODEL = "wavespeed-ai/wan2.1-i2v-480p"        # animate the stills
+T2I_MODEL = "wavespeed-ai/nano-banana-2-edit"      # Google Nano Banana 2 Edit — hyper-realistic stills
+I2V_MODEL = "wavespeed-ai/wan2.1-i2v-480p"        # Wan 2.1 — animate the stills
 
 # Load .env if present
 _env = Path(__file__).parent / ".env"

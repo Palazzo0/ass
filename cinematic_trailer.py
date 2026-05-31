@@ -74,26 +74,34 @@ MID_DARK   = ( 28,  18,  12)
 BLOOD_RED  = (160,  20,  15)
 AMBER      = (200, 120,  40)
 
-# ─── AVATAR NARRATION + SCENE DEFINITIONS ─────────────────────────────────────
-# Timings estimated from a ~32.5s narration.
+# ─── SCENE DEFINITIONS — synced to Whisper timestamps ─────────────────────────
+# Whisper segments:
+#  [ 0.00 –  3.12]  "Now, I know you guys are itching to hear what these habits are."
+#  [ 3.72 –  8.50]  "One of the biggest contributors is...unhealthy fats, sitting"
+#  [ 8.50 – 12.62]  "for long periods and barely moving affects healthy blood circulation."
+#  [13.24 – 16.78]  "Uncontrolled diabetes can quietly damage the arteries over time."
+#  [17.36 – 20.44]  "High blood pressure puts repeated stress on blood vessel walls."
+#  [21.00 – 27.42]  "chronic stress...A lot of people unfortunately fall under this category."
+#  [27.42 – 30.10]  "And the chief, the boss at the top smoking."
+#  [30.38 – 32.38]  "Smoking directly damages blood vessel."
+#
 # avatar_mode: "full" | "pip" | "cut"
-#   full = avatar fills frame (blurred bg behind)
-#   pip  = cinematic bg fills frame, small avatar corner box
-#   cut  = cinematic only, no avatar
 SCENES = [
+    # 0–3.12s: avatar speaks intro line — full frame
     {
         "id":          "intro",
-        "start":        0.0,  "end":  4.0,
+        "start":        0.0,  "end":  3.2,
         "avatar_mode": "full",
         "text":        None,
-        "t2i_prompt":  None,   # avatar-only, no cinematic cutaway
+        "t2i_prompt":  None,
         "i2v_prompt":  None,
     },
+    # 3.12–3.72s: brief dramatic bloodstream cut (between lines)
     {
         "id":          "bloodstream",
-        "start":        3.2,  "end":  8.5,
+        "start":        3.1,  "end":  4.0,
         "avatar_mode": "cut",
-        "text":        "Your habits are shaping\nyour blood vessels.",
+        "text":        None,
         "t2i_prompt": (
             "Extreme macro cinematic interior of a human blood vessel tunnel, "
             "dark deep-red glistening walls, thousands of red blood cells drifting "
@@ -106,11 +114,12 @@ SCENES = [
             "subtle pulse and flow, god rays shifting, atmospheric depth, slow motion"
         ),
     },
+    # 3.72–8.50s: "one of the biggest contributors...unhealthy fats" — pip on food imagery
     {
         "id":          "unhealthy_fat",
-        "start":        8.0,  "end": 13.5,
+        "start":        3.72, "end":  8.5,
         "avatar_mode": "pip",
-        "text":        "Excess unhealthy fat\nbuilds up slowly.",
+        "text":        None,
         "t2i_prompt": (
             "Hyper-realistic cinematic macro close-up of greasy fast food floating "
             "in deep darkness — glistening burger, oily fries, sugary drink with condensation, "
@@ -123,11 +132,12 @@ SCENES = [
             "dramatic side-lighting shifts, macro details emerging, heavy and moody"
         ),
     },
+    # 8.0–8.6s: brief plaque flash — visual consequence of fat as "sitting" begins
     {
         "id":          "plaque_buildup",
-        "start":       12.0,  "end": 16.0,
+        "start":        8.0,  "end":  8.7,
         "avatar_mode": "cut",
-        "text":        "Cholesterol. Plaque.\nSlowing blood flow.",
+        "text":        None,
         "t2i_prompt": (
             "Cinematic medical cross-section of human artery interior: "
             "yellowish cholesterol plaque clinging to deep-red vessel walls, "
@@ -140,11 +150,12 @@ SCENES = [
             "blood flow becoming sluggish, cinematic medical atmosphere, dark and tense"
         ),
     },
+    # 8.50–12.62s: "sitting for long periods and barely moving" — sedentary silhouette
     {
         "id":          "sedentary",
-        "start":       14.0,  "end": 19.5,
+        "start":        8.5,  "end": 12.7,
         "avatar_mode": "pip",
-        "text":        "Movement keeps\nblood flowing.",
+        "text":        None,
         "t2i_prompt": (
             "Cinematic dark portrait silhouette: person sitting motionless alone "
             "in a dim room, hunched posture, single harsh rim light from the side, "
@@ -157,11 +168,21 @@ SCENES = [
             "dimming, atmospheric haze thickening, emotional stillness, very slow"
         ),
     },
+    # 12.62–13.24s: brief avatar beat between lines — cut back to avatar full
+    {
+        "id":          "avatar_beat_1",
+        "start":       12.7,  "end": 13.3,
+        "avatar_mode": "full",
+        "text":        None,
+        "t2i_prompt":  None,
+        "i2v_prompt":  None,
+    },
+    # 13.24–16.78s: "uncontrolled diabetes can quietly damage" — diabetes visual
     {
         "id":          "diabetes",
-        "start":       18.5,  "end": 23.5,
+        "start":       13.2,  "end": 16.9,
         "avatar_mode": "cut",
-        "text":        "High sugar silently\ndamages vessels.",
+        "text":        None,
         "t2i_prompt": (
             "Extreme macro cinematic inside a human blood vessel: sharp crystalline "
             "glucose particles flowing aggressively through dark blood, artery lining "
@@ -175,11 +196,12 @@ SCENES = [
             "on artery walls, slow cinematic push through damaged vessel interior, intense"
         ),
     },
+    # 17.36–20.44s: "high blood pressure puts repeated stress" — pressure visual
     {
         "id":          "blood_pressure",
-        "start":       23.0,  "end": 27.5,
+        "start":       17.3,  "end": 20.5,
         "avatar_mode": "pip",
-        "text":        "Pressure weakens\nthe vessels.",
+        "text":        None,
         "t2i_prompt": (
             "Cinematic macro human artery under extreme hypertensive pressure: "
             "vessel walls bulging dramatically, blood surging violently with visible "
@@ -193,11 +215,21 @@ SCENES = [
             "and recoiling rhythmically, dramatic cinematic impact, deep heartbeat pulse"
         ),
     },
+    # 20.44–21.0s: brief avatar beat before stress section
+    {
+        "id":          "avatar_beat_2",
+        "start":       20.5,  "end": 21.1,
+        "avatar_mode": "full",
+        "text":        None,
+        "t2i_prompt":  None,
+        "i2v_prompt":  None,
+    },
+    # 21.0–27.42s: "chronic stress...a lot of people fall under this category"
     {
         "id":          "stress",
-        "start":       27.0,  "end": 31.5,
+        "start":       21.0,  "end": 27.5,
         "avatar_mode": "cut",
-        "text":        "Stress affects\nthe body too.",
+        "text":        None,
         "t2i_prompt": (
             "Cinematic dark atmospheric portrait: emotionally drained silhouette, "
             "face faintly illuminated by cold phone screen glow in very dark room, "
@@ -211,11 +243,12 @@ SCENES = [
             "phone light flickering slightly, atmosphere becoming heavier and more oppressive"
         ),
     },
+    # 27.42–30.10s: "and the chief, the boss at the top...smoking" — dramatic reveal
     {
         "id":          "smoking_reveal",
-        "start":       30.5,  "end": 35.0,
+        "start":       27.4,  "end": 30.2,
         "avatar_mode": "pip",
-        "text":        "Smoking destroys\nblood vessels.",
+        "text":        None,
         "t2i_prompt": (
             "DRAMATIC cinematic reveal: dark silhouette smoking in near-total darkness, "
             "cigarette ember burning intensely bright, thick white-grey smoke billowing "
@@ -229,11 +262,12 @@ SCENES = [
             "smoke morphing into damaged blood vessels, cinematic impact, very slow motion"
         ),
     },
+    # 30.38–32.38s: "smoking directly damages blood vessel" — artery damage extreme close
     {
         "id":          "artery_damage",
-        "start":       34.0,  "end": 38.5,
+        "start":       30.3,  "end": 32.5,
         "avatar_mode": "cut",
-        "text":        "Damage builds\nover time.",
+        "text":        None,
         "t2i_prompt": (
             "Extreme macro cinematic artery interior: healthy left half "
             "(bright red, open, clean walls) vs severely diseased right half "
@@ -247,12 +281,13 @@ SCENES = [
             "blood flow stopping, tiny clot forming in slow cinematic motion, intense"
         ),
     },
+    # 32.38s+: avatar returns full frame, brand card fades in
     {
         "id":          "outro",
-        "start":       37.5,  "end": 43.0,
+        "start":       32.3,  "end": 37.0,
         "avatar_mode": "full",
-        "text":        "Your daily habits matter\nmore than you think.",
-        "t2i_prompt":  None,   # avatar holds screen
+        "text":        None,
+        "t2i_prompt":  None,
         "i2v_prompt":  None,
     },
 ]
@@ -1003,13 +1038,7 @@ def main():
         # ECG heartbeat line
         base = draw_heartbeat_line(base, t, alpha=95)
 
-        # Text overlay
-        if scene.get("text"):
-            t_in  = clamp(local_t / 1.0)
-            t_out = clamp((dur - local_t) / 0.5)
-            base = draw_text_overlay(base, scene["text"], min(t_in, t_out))
-
-        # Brand outro
+        # Brand outro (no text overlays on main content)
         outro_t = max(s["end"] for s in SCENES) + 0.5
         if t >= outro_t:
             prog = clamp((t - outro_t) / 3.0)

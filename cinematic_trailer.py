@@ -503,7 +503,12 @@ def _submit(key: str, model: str, payload: dict, max_retries: int = 8) -> str:
             print(f"    429 rate limit — waiting {wait}s (attempt {attempt+1}/{max_retries})", flush=True)
             time.sleep(wait)
             continue
-        r.raise_for_status()
+        if not r.ok:
+            try:
+                msg = r.json().get("message", r.text[:200])
+            except Exception:
+                msg = r.text[:200]
+            raise RuntimeError(f"HTTP {r.status_code} from {model}: {msg}")
         return r.json()["data"]["id"]
     raise RuntimeError(f"Max retries exceeded for {model}")
 
@@ -618,8 +623,10 @@ def animate_still(key: str, scene: dict, still: Image.Image, cache_dir: Path, i2
 
     print(f"  [{sid}] Animating with {i2v_model}…", flush=True)
     num_frames_api = min(81, max(16, int(dur * 16)))
+    # Resize to 480p (480×832) before base64 — keeps payload small
+    still_480 = still.resize((480, 832), Image.LANCZOS)
     payload = {
-        "image":                img_to_b64(still),
+        "image":                img_to_b64(still_480),
         "prompt":               scene["i2v_prompt"],
         "num_frames":           num_frames_api,
         "guidance_scale":       6.0,

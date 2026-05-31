@@ -560,8 +560,93 @@ def _make_dark_base(scene_id: str) -> Image.Image:
     arr = np.clip(arr + np.random.randint(-14, 15, arr.shape, dtype=np.int16), 0, 255).astype(np.uint8)
     return Image.fromarray(arr)
 
+def _make_atmospheric_still(scene_id: str) -> Image.Image:
+    """
+    Create a cinematic atmospheric still using PIL when API credits are gone.
+    Uses radial gradients, glow effects, and structural shapes per scene.
+    """
+    img = Image.new("RGB", (W, H), (4, 2, 2))
+    arr = np.zeros((H, W, 3), dtype=np.float32)
+
+    cx, cy = W // 2, H // 2
+    ys = np.arange(H)[:, np.newaxis]
+    xs = np.arange(W)[np.newaxis, :]
+    dist = np.sqrt((xs - cx)**2 + (ys - cy)**2).astype(np.float32)
+    max_d = np.sqrt(cx**2 + cy**2)
+
+    if scene_id == "smoking_reveal":
+        # Near-black with bright ember glow and drifting smoke wisps
+        # Base: very dark charcoal
+        arr[:] = [6, 5, 4]
+        # Ember — intense orange-white hotspot at center-low
+        ex, ey = cx, int(H * 0.72)
+        ed = np.sqrt((xs - ex)**2 + (ys - ey)**2).astype(np.float32)
+        ember = np.exp(-ed**2 / (80**2))
+        arr[:, :, 0] += ember * 220
+        arr[:, :, 1] += ember * 100
+        arr[:, :, 2] += ember * 20
+        # Smoke column — grey vertical gradient above ember
+        smoke_x = np.abs(xs - ex).astype(np.float32)
+        above = np.where(ys < ey, 1.0, 0.0)
+        smoke = np.exp(-smoke_x**2 / (120**2)) * above
+        height_fade = np.clip((ey - ys) / (ey * 0.9), 0, 1)
+        arr[:, :, 0] += smoke * height_fade * 55
+        arr[:, :, 1] += smoke * height_fade * 50
+        arr[:, :, 2] += smoke * height_fade * 52
+
+    elif scene_id == "artery_damage":
+        # Cylindrical tunnel, healthy left / damaged right split
+        # Background: deep crimson
+        arr[:] = [25, 4, 2]
+        # Tunnel walls — radial dark ring
+        tunnel_r = int(W * 0.36)
+        ring = np.clip((dist - tunnel_r) / 80, 0, 1)
+        arr[:, :, 0] -= ring * 20
+        arr[:, :, 1] -= ring * 3
+        arr[:, :, 2] -= ring * 2
+        # Left half: healthy — bright red open channel
+        left_mask = (xs < cx).astype(np.float32)
+        inner_l = np.clip(1.0 - dist / (tunnel_r * 0.7), 0, 1)
+        arr[:, :, 0] += inner_l * left_mask * 160
+        arr[:, :, 1] += inner_l * left_mask * 18
+        arr[:, :, 2] += inner_l * left_mask * 12
+        # Right half: diseased — dark amber-brown plaque buildup
+        right_mask = (xs >= cx).astype(np.float32)
+        plaque_r = tunnel_r * 0.30
+        inner_r = np.clip(1.0 - dist / plaque_r, 0, 1)
+        arr[:, :, 0] += inner_r * right_mask * 60
+        arr[:, :, 1] += inner_r * right_mask * 25
+        arr[:, :, 2] += inner_r * right_mask * 5
+        # Plaque coating on right wall
+        plaque_ring = np.clip(1.0 - np.abs(dist - tunnel_r * 0.55) / 40, 0, 1) * right_mask
+        arr[:, :, 0] += plaque_ring * 80
+        arr[:, :, 1] += plaque_ring * 35
+        arr[:, :, 2] += plaque_ring * 5
+
+    else:
+        # Generic dark atmospheric: radial glow + noise
+        colors = {
+            "bloodstream":    ([60, 8, 6],   [180, 20, 10]),
+            "unhealthy_fat":  ([14, 10, 5],  [50,  30, 10]),
+            "plaque_buildup": ([40, 12, 5],  [120, 50, 15]),
+            "sedentary":      ([5,  5, 10],  [20,  18, 40]),
+            "diabetes":       ([55, 10, 4],  [200, 60, 10]),
+            "blood_pressure": ([60, 8,  6],  [220, 30, 15]),
+            "stress":         ([5,  5, 12],  [25,  15, 55]),
+        }
+        bg, glow = colors.get(scene_id, ([8, 6, 4], [60, 30, 15]))
+        arr[:] = bg
+        radial = np.exp(-dist**2 / (cx * 0.7)**2)
+        for c in range(3):
+            arr[:, :, c] += radial * glow[c]
+
+    # Noise for film grain feel
+    arr += np.random.uniform(-8, 8, arr.shape)
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr).filter(ImageFilter.GaussianBlur(1))
+
 def generate_still(key: str, scene: dict, cache_dir: Path, t2i_model: str = T2I_MODEL) -> Image.Image:
-    """Generate a cinematic still for the scene; caches result."""
+    """Generate a cinematic still; API first, local atmospheric fallback."""
     sid = scene["id"]
     still_path = cache_dir / f"{sid}_still.png"
 
@@ -571,7 +656,6 @@ def generate_still(key: str, scene: dict, cache_dir: Path, t2i_model: str = T2I_
 
     print(f"  [{sid}] Generating still with {t2i_model}…", flush=True)
 
-    # Build payload for Nano Banana 2 Edit
     base_img = _make_dark_base(sid)
     b64_base = img_to_b64(base_img)
     payload = {
@@ -585,25 +669,33 @@ def generate_still(key: str, scene: dict, cache_dir: Path, t2i_model: str = T2I_
         "enable_web_search":    False,
     }
 
+    url = None
     try:
         task_id = _submit(key, t2i_model, payload)
         print(f"    Task ID: {task_id}", flush=True)
         url = _poll(key, task_id, timeout=600)
     except Exception as e:
-        print(f"    NB2 Edit failed ({e}), falling back to {T2I_FALLBACK}…", flush=True)
-        payload_fb = {
-            "prompt": scene["t2i_prompt"],
-            "num_inference_steps": 28,
-            "guidance_scale": 7.5,
-            "size": "576*1024",
-        }
-        task_id = _submit(key, T2I_FALLBACK, payload_fb)
-        print(f"    Fallback task ID: {task_id}", flush=True)
-        url = _poll(key, task_id, timeout=600)
+        print(f"    NB2 Edit failed ({e}), trying {T2I_FALLBACK}…", flush=True)
+        try:
+            payload_fb = {
+                "prompt": scene["t2i_prompt"],
+                "num_inference_steps": 28,
+                "guidance_scale": 7.5,
+                "size": "576*1024",
+            }
+            task_id = _submit(key, T2I_FALLBACK, payload_fb)
+            print(f"    Fallback task ID: {task_id}", flush=True)
+            url = _poll(key, task_id, timeout=600)
+        except Exception as e2:
+            print(f"    Both APIs failed ({e2}) — using local atmospheric still", flush=True)
 
-    tmp = _download(url, ".png")
-    still = Image.open(tmp).convert("RGB")
-    tmp.unlink(missing_ok=True)
+    if url:
+        tmp = _download(url, ".png")
+        still = Image.open(tmp).convert("RGB")
+        tmp.unlink(missing_ok=True)
+    else:
+        still = _make_atmospheric_still(sid)
+
     still = still.resize((W, H), Image.LANCZOS)
     still.save(still_path)
     print(f"    Still saved → {still_path}", flush=True)

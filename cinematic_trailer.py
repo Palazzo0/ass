@@ -2,18 +2,19 @@
 Dr. P's Corner — Cinematic Medical Trailer Generator
 =====================================================
 Transforms the avatar talking video into a Netflix-style medical
-documentary trailer using WaveSpeed Nano Banana Pro (T2I) + Wan 2.1 (I2V).
+documentary trailer using WaveSpeed Nano Banana 2 Edit (T2I) + Wan 2.1 (I2V).
 
 Pipeline:
-  1. Generate cinematic stills for each scene  (WaveSpeed T2I)
-  2. Animate each still into a video clip      (WaveSpeed I2V)
+  1. Generate cinematic stills for each scene  (WaveSpeed Nano Banana 2 Edit)
+  2. Animate each still into a video clip      (WaveSpeed Wan 2.1 I2V)
   3. Process avatar video → 9:16 portrait
   4. Assemble scenes with transitions + PiP
   5. Apply motion-graphics text overlays
-  6. Apply cinematic color grading
-  7. Export 1080×1920 @ 24fps
+  6. Apply cinematic colour grading + vignette
+  7. Extract avatar audio and merge into final output
+  8. Export 1080×1920 @ 24fps
 
-Usage (run on your local machine / Termux):
+Usage:
     python cinematic_trailer.py \
         --avatar /path/to/VID20260531WA0016.mp4 \
         --output drp_trailer.mp4
@@ -24,9 +25,10 @@ Environment:
 
 import argparse
 import base64
+import io as _io
 import math
 import os
-import subprocess
+import shutil
 import sys
 import tempfile
 import time
@@ -35,17 +37,23 @@ from pathlib import Path
 
 import numpy as np
 import requests
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-W, H = 1080, 1920
-FPS = 24
-WAVESPEED_BASE = "https://api.wavespeed.ai/api/v2"
+W, H   = 1080, 1920
+FPS    = 24
+WAVESPEED_BASE = "https://api.wavespeed.ai/api/v3"
 
-T2I_MODEL = "google/nano-banana-2/edit"             # Google Nano Banana 2 Edit — hyper-realistic stills
-I2V_MODEL = "wavespeed-ai/wan2.1-i2v-480p"        # Wan 2.1 — animate the stills
+# T2I: Nano Banana 2 Edit (hyper-realistic image editing / generation)
+T2I_MODEL       = "google/nano-banana-2/edit"
+T2I_FALLBACK    = "wavespeed-ai/flux-dev"       # fallback if NB2 fails
 
-# Load .env if present
+# I2V: Wan 2.1 480p (animate stills into cinematic clips)
+I2V_MODEL       = "wavespeed-ai/wan-2.1/i2v-480p"
+
+AVATAR_PATH = "/root/.claude/uploads/b13fbee6-c7ab-4c76-ac28-394ef5e2fdca/c0f660bc-VID20260531WA0016.mp4"
+
+# Load .env
 _env = Path(__file__).parent / ".env"
 if _env.exists():
     for _l in _env.read_text().splitlines():
@@ -61,120 +69,124 @@ LILAC      = (200, 180, 226)
 NUDE_BROWN = (160, 120,  90)
 CREAM      = (255, 248, 242)
 DEEP_ROSE  = (212,  96, 122)
-DARK       = ( 12,   8,   6)
+DARK       = ( 10,   6,   4)
 MID_DARK   = ( 28,  18,  12)
-BLOOD_RED  = (180,  30,  20)
-AMBER      = (220, 140,  60)
+BLOOD_RED  = (160,  20,  15)
+AMBER      = (200, 120,  40)
 
-# ─── SCENE DEFINITIONS ────────────────────────────────────────────────────────
-# (start_sec, end_sec, avatar_mode, text_overlay, t2i_prompt, i2v_prompt)
-# avatar_mode: "full" | "pip" | "cut" (cut = cinematic only, no avatar)
+# ─── AVATAR NARRATION + SCENE DEFINITIONS ─────────────────────────────────────
+# Timings estimated from a ~32.5s narration.
+# avatar_mode: "full" | "pip" | "cut"
+#   full = avatar fills frame (blurred bg behind)
+#   pip  = cinematic bg fills frame, small avatar corner box
+#   cut  = cinematic only, no avatar
 SCENES = [
     {
-        "id": "intro",
-        "start": 0.0, "end": 4.0,
+        "id":          "intro",
+        "start":        0.0,  "end":  4.0,
         "avatar_mode": "full",
-        "text": None,
-        "t2i_prompt": None,   # no cutaway — avatar only
+        "text":        None,
+        "t2i_prompt":  None,   # avatar-only, no cinematic cutaway
+        "i2v_prompt":  None,
     },
     {
-        "id": "bloodstream",
-        "start": 3.5, "end": 8.5,
+        "id":          "bloodstream",
+        "start":        3.2,  "end":  8.5,
         "avatar_mode": "cut",
-        "text": "Your habits are shaping\nyour blood vessels.",
+        "text":        "Your habits are shaping\nyour blood vessels.",
         "t2i_prompt": (
             "Extreme macro cinematic interior of a human blood vessel tunnel, "
-            "dark deep-red walls glistening, thousands of red blood cells drifting "
+            "dark deep-red glistening walls, thousands of red blood cells drifting "
             "in viscous fluid, bioluminescent particles floating, volumetric god rays "
-            "penetrating darkness, amber and crimson tones, 9:16 vertical portrait, "
-            "photorealistic, 8K, shallow depth of field, film grain, cinematic"
+            "penetrating darkness, amber and deep crimson tones, "
+            "9:16 vertical portrait photorealistic 8K shallow depth of field film grain cinematic"
         ),
         "i2v_prompt": (
             "Slow cinematic push through blood vessel tunnel, particles drifting, "
-            "subtle pulse and flow, god rays shifting, atmospheric depth"
+            "subtle pulse and flow, god rays shifting, atmospheric depth, slow motion"
         ),
     },
     {
-        "id": "unhealthy_fat",
-        "start": 8.5, "end": 14.0,
+        "id":          "unhealthy_fat",
+        "start":        8.0,  "end": 13.5,
         "avatar_mode": "pip",
-        "text": "Excess unhealthy fat\nbuilds up slowly.",
+        "text":        "Excess unhealthy fat\nbuilds up slowly.",
         "t2i_prompt": (
             "Hyper-realistic cinematic macro close-up of greasy fast food floating "
             "in deep darkness — glistening burger, oily fries, sugary drink with condensation, "
-            "fat droplets refracting dramatic side-lighting, oil sheen on surfaces, "
-            "microscopic fat particles visible in foreground air, dark premium moody aesthetic, "
-            "9:16 vertical portrait, photorealistic, 8K, cinematic lens flare, deep shadows"
+            "fat droplets catching dramatic side-lighting, microscopic fat particles "
+            "visible in foreground, dark premium moody medical aesthetic, "
+            "9:16 vertical portrait photorealistic 8K deep shadows cinematic lens"
         ),
         "i2v_prompt": (
             "Slow cinematic reveal of fast food in darkness, fat particles drifting forward, "
-            "dramatic side-lighting shifts, macro close-up details emerge, moody and heavy"
+            "dramatic side-lighting shifts, macro details emerging, heavy and moody"
         ),
     },
     {
-        "id": "plaque_buildup",
-        "start": 12.0, "end": 16.0,
+        "id":          "plaque_buildup",
+        "start":       12.0,  "end": 16.0,
         "avatar_mode": "cut",
-        "text": "Cholesterol. Plaque.\nSlowing blood flow.",
+        "text":        "Cholesterol. Plaque.\nSlowing blood flow.",
         "t2i_prompt": (
-            "Cinematic medical visualization: interior cross-section of a human artery, "
-            "yellowish cholesterol plaque clinging to reddish vessel walls, blood flow "
-            "visibly narrowed, sticky fat deposits building on artery surface, "
-            "dark atmospheric medical aesthetic, amber and dark crimson palette, "
-            "9:16 vertical portrait, photorealistic, 8K, volumetric depth"
+            "Cinematic medical cross-section of human artery interior: "
+            "yellowish cholesterol plaque clinging to deep-red vessel walls, "
+            "blood flow visibly narrowed, sticky fat deposits layering on artery surface, "
+            "dark atmospheric medical documentary aesthetic, amber and dark crimson palette, "
+            "9:16 vertical portrait photorealistic 8K volumetric depth"
         ),
         "i2v_prompt": (
             "Slow push through narrowing artery, plaque slowly building on walls, "
-            "blood flow becoming sluggish, dark cinematic medical atmosphere"
+            "blood flow becoming sluggish, cinematic medical atmosphere, dark and tense"
         ),
     },
     {
-        "id": "sedentary",
-        "start": 14.5, "end": 19.0,
+        "id":          "sedentary",
+        "start":       14.0,  "end": 19.5,
         "avatar_mode": "pip",
-        "text": "Movement keeps\nblood flowing.",
+        "text":        "Movement keeps\nblood flowing.",
         "t2i_prompt": (
-            "Cinematic dark portrait silhouette: person sitting completely still in a "
-            "dim room for hours, hunched posture, head drooping, single harsh rim light "
-            "from the side, deep shadows consuming 80% of frame, heavy oppressive mood, "
-            "atmospheric haze, chair barely visible, film noir medical aesthetic, "
-            "9:16 vertical portrait, photorealistic, 8K, grain, shallow depth of field"
+            "Cinematic dark portrait silhouette: person sitting motionless alone "
+            "in a dim room, hunched posture, single harsh rim light from the side, "
+            "deep oppressive shadows consuming 80% of frame, heavy atmospheric haze, "
+            "film noir medical aesthetic, "
+            "9:16 vertical portrait photorealistic 8K grain shallow depth of field"
         ),
         "i2v_prompt": (
             "Slow cinematic camera circle around sedentary silhouette, light slowly "
-            "dimming, heavy atmospheric haze thickening, emotional stillness"
+            "dimming, atmospheric haze thickening, emotional stillness, very slow"
         ),
     },
     {
-        "id": "diabetes",
-        "start": 19.0, "end": 23.5,
+        "id":          "diabetes",
+        "start":       18.5,  "end": 23.5,
         "avatar_mode": "cut",
-        "text": "High sugar silently\ndamages vessels.",
+        "text":        "High sugar silently\ndamages vessels.",
         "t2i_prompt": (
-            "Extreme macro cinematic shot inside a human blood vessel: sharp crystalline "
+            "Extreme macro cinematic inside a human blood vessel: sharp crystalline "
             "glucose particles flowing aggressively through dark blood, artery lining "
             "showing inflammation — subtle orange-red inflammatory glow on vessel walls, "
-            "tiny micro-tears beginning, medical biopunk aesthetic, dark crimson and amber "
-            "tones with fiery inflammatory highlights, 9:16 vertical portrait, "
-            "photorealistic, 8K, cinematic depth"
+            "micro-tears beginning, medical biopunk aesthetic, dark crimson and amber "
+            "tones with fiery inflammatory highlights, "
+            "9:16 vertical portrait photorealistic 8K cinematic"
         ),
         "i2v_prompt": (
             "Glucose crystals flowing through blood vessel, inflammatory glow pulsing "
-            "on artery walls, slow cinematic push through damaged vessel interior"
+            "on artery walls, slow cinematic push through damaged vessel interior, intense"
         ),
     },
     {
-        "id": "blood_pressure",
-        "start": 23.5, "end": 27.5,
+        "id":          "blood_pressure",
+        "start":       23.0,  "end": 27.5,
         "avatar_mode": "pip",
-        "text": "Pressure weakens\nthe vessels.",
+        "text":        "Pressure weakens\nthe vessels.",
         "t2i_prompt": (
-            "Cinematic macro shot of a human artery under extreme hypertensive pressure: "
+            "Cinematic macro human artery under extreme hypertensive pressure: "
             "vessel walls bulging dramatically, blood surging violently with visible "
             "pressure waves slamming vessel walls, white pressure flares at impact points, "
             "deep dark red with stark white highlights, walls visibly straining, "
-            "slow-motion freeze-frame energy, 9:16 vertical portrait, photorealistic, "
-            "8K, cinematic impact, dramatic contrast"
+            "slow-motion freeze-frame energy, "
+            "9:16 vertical portrait photorealistic 8K cinematic impact dramatic contrast"
         ),
         "i2v_prompt": (
             "Blood pressure waves slamming artery walls in slow motion, vessel bulging "
@@ -182,17 +194,17 @@ SCENES = [
         ),
     },
     {
-        "id": "stress",
-        "start": 27.0, "end": 31.5,
+        "id":          "stress",
+        "start":       27.0,  "end": 31.5,
         "avatar_mode": "cut",
-        "text": "Stress affects\nthe body too.",
+        "text":        "Stress affects\nthe body too.",
         "t2i_prompt": (
-            "Cinematic dark atmospheric portrait: emotionally drained silhouette in a "
-            "very dark room, face faintly illuminated by cold phone screen glow, dark "
-            "smoke wisps rising and curling around the figure, irregular glowing particles "
-            "representing cortisol and adrenaline drifting through air, heavy oppressive "
-            "mood, barely visible surroundings, emotional weight, 9:16 vertical portrait, "
-            "photorealistic, 8K, grain, cinematic shallow focus"
+            "Cinematic dark atmospheric portrait: emotionally drained silhouette, "
+            "face faintly illuminated by cold phone screen glow in very dark room, "
+            "dark smoke wisps rising and curling around the figure, irregular glowing "
+            "particles representing cortisol drifting through air, heavy oppressive mood, "
+            "emotional weight, "
+            "9:16 vertical portrait photorealistic 8K grain cinematic shallow focus"
         ),
         "i2v_prompt": (
             "Dark smoke slowly expanding around stressed silhouette, particles drifting, "
@@ -200,65 +212,60 @@ SCENES = [
         ),
     },
     {
-        "id": "smoking_reveal",
-        "start": 30.5, "end": 34.5,
+        "id":          "smoking_reveal",
+        "start":       30.5,  "end": 35.0,
         "avatar_mode": "pip",
-        "text": "Smoking destroys\nblood vessels.",
+        "text":        "Smoking destroys\nblood vessels.",
         "t2i_prompt": (
-            "DRAMATIC cinematic reveal: dark silhouette smoking, cigarette ember burning "
-            "intensely bright in near-total darkness, thick white-grey smoke billowing "
-            "and expanding dramatically to fill entire frame, smoke tendrils morphing at "
-            "edges into microscopic damaged blood vessel structures — darkened, narrowed, "
-            "necrotic, deep charcoal and near-black tones with glowing ember as only light "
-            "source, cinematic impact composition, 9:16 vertical portrait, photorealistic, "
-            "8K, extreme atmosphere, film grain"
+            "DRAMATIC cinematic reveal: dark silhouette smoking in near-total darkness, "
+            "cigarette ember burning intensely bright, thick white-grey smoke billowing "
+            "to fill entire frame, smoke tendrils at edges morphing into microscopic "
+            "damaged blood vessel structures — darkened, narrowed, necrotic, "
+            "deep charcoal and near-black tones, ember as only light source, "
+            "9:16 vertical portrait photorealistic 8K extreme atmosphere film grain"
         ),
         "i2v_prompt": (
-            "Slow dramatic reveal: smoke expanding to fill frame, ember glowing, "
-            "smoke morphing into damaged blood vessels at edges, cinematic impact, "
-            "slow-motion, very atmospheric"
+            "Slow dramatic reveal: smoke expanding to fill frame, ember glowing intensely, "
+            "smoke morphing into damaged blood vessels, cinematic impact, very slow motion"
         ),
     },
     {
-        "id": "artery_damage",
-        "start": 33.5, "end": 38.0,
+        "id":          "artery_damage",
+        "start":       34.0,  "end": 38.5,
         "avatar_mode": "cut",
-        "text": "Damage builds\nover time.",
+        "text":        "Damage builds\nover time.",
         "t2i_prompt": (
-            "Extreme macro cinematic sequence: human artery interior showing progressive "
-            "damage — left half healthy (bright red, open, clean walls), right half "
-            "severely diseased (dark, narrowed, thick black-brown plaque coating walls, "
+            "Extreme macro cinematic artery interior: healthy left half "
+            "(bright red, open, clean walls) vs severely diseased right half "
+            "(dark, narrowed, thick black-brown plaque coating walls, "
             "tiny white blood clot forming at narrowest point), blood flow nearly blocked, "
-            "dramatic contrast between healthy and damaged, dark medical documentary aesthetic, "
-            "9:16 vertical portrait, photorealistic, 8K, cinematic"
+            "dramatic split contrast, dark medical documentary aesthetic, "
+            "9:16 vertical portrait photorealistic 8K cinematic"
         ),
         "i2v_prompt": (
-            "Healthy artery rapidly transforming to blocked vessel, plaque accelerating, "
-            "blood flow stopping, tiny clot forming in slow cinematic motion"
+            "Healthy artery transforming to blocked vessel, plaque accelerating, "
+            "blood flow stopping, tiny clot forming in slow cinematic motion, intense"
         ),
     },
     {
-        "id": "outro",
-        "start": 36.5, "end": 41.0,
+        "id":          "outro",
+        "start":       37.5,  "end": 43.0,
         "avatar_mode": "full",
-        "text": "Your daily habits matter\nmore than you think.",
-        "t2i_prompt": None,   # avatar holds screen for outro
+        "text":        "Your daily habits matter\nmore than you think.",
+        "t2i_prompt":  None,   # avatar holds screen
+        "i2v_prompt":  None,
     },
 ]
 
-# ─── FONT FALLBACKS ───────────────────────────────────────────────────────────
+# ─── FONT HELPERS ─────────────────────────────────────────────────────────────
 FONT_PATHS = {
     "serif": [
         "/root/.fonts/PlayfairDisplay-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
-        "/system/fonts/NotoSerif-Bold.ttf",
-        "/data/data/com.termux/files/usr/share/fonts/liberation/LiberationSerif-Bold.ttf",
     ],
     "sans": [
         "/root/.fonts/DMSans-Medium.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/system/fonts/Roboto-Regular.ttf",
-        "/data/data/com.termux/files/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
     ],
 }
 _font_cache: dict = {}
@@ -286,573 +293,596 @@ def ease_in_out(t):
     t = clamp(t)
     return 3*t**2 - 2*t**3
 
-# ─── COLOR GRADING ────────────────────────────────────────────────────────────
-def apply_cinematic_grade(img: Image.Image) -> Image.Image:
-    """
-    Dark cinematic grade:
-    - Crush shadows to near-black
-    - Lift blacks slightly (film look)
-    - Boost contrast in midtones
-    - Add warm shadow tint (brown/amber)
-    - Add subtle cool highlight tint (lilac)
-    - Reduce saturation slightly
-    - Add film grain
-    """
+# ─── CINEMATIC COLOUR GRADE ───────────────────────────────────────────────────
+def apply_cinematic_grade(img: Image.Image, strength: float = 1.0) -> Image.Image:
+    """Dark cinematic grade: shadow crush, warm tint, desaturate, film grain."""
     arr = np.array(img).astype(np.float32)
 
-    # Exposure: slightly underexpose for drama
-    arr *= 0.88
+    # Underexpose slightly
+    arr *= 0.86
 
     # Contrast S-curve
-    arr = arr / 255.0
-    arr = arr ** 0.9  # slight gamma adjustment
-    # S-curve: lift shadows, crush highlights
-    arr = 0.5 * np.sin(np.pi * (arr - 0.5)) + 0.5
-    arr = arr * 255.0
+    a = arr / 255.0
+    a = 0.5 * np.sin(np.pi * (a - 0.5)) + 0.5
+    arr = a * 255.0
 
-    # Shadow tint — warm amber/brown in darks
-    luma = arr.mean(axis=2)   # (H, W)
-    shadow_mask = np.clip(1.0 - luma / 120.0, 0, 1)[:, :, np.newaxis]  # (H,W,1)
-    arr[:, :, 0:1] += shadow_mask * 12   # R
-    arr[:, :, 1:2] += shadow_mask * 4    # G
-    arr[:, :, 2:3] -= shadow_mask * 8    # B
+    # Warm shadow tint
+    luma = arr.mean(axis=2)
+    sh = np.clip(1.0 - luma / 100.0, 0, 1)[:, :, np.newaxis]
+    arr[:, :, 0:1] += sh * 14 * strength
+    arr[:, :, 1:2] += sh * 4  * strength
+    arr[:, :, 2:3] -= sh * 10 * strength
 
-    # Highlight tint — subtle lilac in brights
-    hi_mask = np.clip((luma - 180.0) / 75.0, 0, 1)[:, :, np.newaxis]
-    arr[:, :, 0:1] += hi_mask * 8
-    arr[:, :, 1:2] += hi_mask * 2
-    arr[:, :, 2:3] += hi_mask * 14
+    # Cool lilac highlight tint
+    hi = np.clip((luma - 185.0) / 70.0, 0, 1)[:, :, np.newaxis]
+    arr[:, :, 0:1] += hi * 6  * strength
+    arr[:, :, 1:2] += hi * 2  * strength
+    arr[:, :, 2:3] += hi * 12 * strength
 
     # Crush blacks
-    arr = np.maximum(arr - 8, 0)
-
+    arr = np.maximum(arr - 10, 0)
     arr = np.clip(arr, 0, 255).astype(np.uint8)
-    img_graded = Image.fromarray(arr)
 
-    # Desaturate slightly
-    from PIL import ImageEnhance
-    img_graded = ImageEnhance.Color(img_graded).enhance(0.82)
+    graded = Image.fromarray(arr)
+    graded = ImageEnhance.Color(graded).enhance(0.80)
 
     # Film grain
-    grain = np.random.randint(-14, 15, arr.shape, dtype=np.int16)
-    arr2 = np.clip(np.array(img_graded).astype(np.int16) + grain, 0, 255).astype(np.uint8)
-
-    return Image.fromarray(arr2)
+    noise = np.random.randint(-12, 13, np.array(graded).shape, dtype=np.int16)
+    grain_arr = np.clip(np.array(graded).astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(grain_arr)
 
 def apply_vignette(img: Image.Image, strength: float = 0.6) -> Image.Image:
-    """Add a strong cinematic vignette."""
+    """Strong cinematic vignette."""
     vig = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(vig)
+    d = ImageDraw.Draw(vig)
     for i in range(60):
-        r = W // 2 + int(i * 12)
+        r = W // 2 + i * 12
         alpha = int(strength * 255 * (i / 60) ** 2)
-        color = (0, 0, 0, min(alpha, 255))
-        draw.ellipse([W//2 - r, H//2 - r*2, W//2 + r, H//2 + r*2], outline=color, width=18)
-    vignette = vig.filter(ImageFilter.GaussianBlur(30))
-    base = img.convert("RGBA")
-    return Image.alpha_composite(base, vignette).convert("RGB")
+        d.ellipse([W//2 - r, H//2 - r*2, W//2 + r, H//2 + r*2],
+                  outline=(0, 0, 0, min(alpha, 255)), width=18)
+    vig = vig.filter(ImageFilter.GaussianBlur(30))
+    return Image.alpha_composite(img.convert("RGBA"), vig).convert("RGB")
 
-# ─── AVATAR FRAME PROCESSOR ───────────────────────────────────────────────────
-def avatar_to_portrait(frame: Image.Image, mode: str = "full",
-                        bg_frames: list = None, bg_idx: int = 0) -> Image.Image:
-    """
-    Convert landscape avatar frame (640×360) to 9:16 portrait (1080×1920).
-
-    mode 'full' : blur-fill bg + centred avatar
-    mode 'pip'  : avatar in bottom-right corner, bg fills frame
-    """
+# ─── AVATAR → PORTRAIT ────────────────────────────────────────────────────────
+def avatar_to_portrait(frame: Image.Image, mode: str,
+                        cin_frame: Image.Image = None) -> Image.Image:
+    """Convert 640×360 avatar frame to 1080×1920 portrait."""
     iw, ih = frame.size
 
     if mode == "full":
-        # Scale avatar to fill full width
-        scale = W / iw
-        aw = W
-        ah = int(ih * scale)
-        avatar_scaled = frame.resize((aw, ah), Image.LANCZOS)
+        # Scale avatar to full width
+        aw, ah = W, int(ih * W / iw)
+        av = frame.resize((aw, ah), Image.LANCZOS)
 
-        # Blurred + darkened full-frame background
-        bg_scale = H / ih
-        bw = int(iw * bg_scale)
+        # Blurred + darkened full-frame bg
+        bh_scale = H / ih
+        bw = int(iw * bh_scale)
         bg = frame.resize((bw, H), Image.LANCZOS)
         if bw > W:
-            ox = (bw - W) // 2
-            bg = bg.crop((ox, 0, ox + W, H))
+            bg = bg.crop(((bw - W) // 2, 0, (bw - W) // 2 + W, H))
         else:
-            pad = Image.new("RGB", (W, H), (0, 0, 0))
+            pad = Image.new("RGB", (W, H), DARK)
             pad.paste(bg, ((W - bw) // 2, 0))
             bg = pad
-
-        bg = bg.filter(ImageFilter.GaussianBlur(25))
+        bg = bg.filter(ImageFilter.GaussianBlur(28))
         bg = Image.blend(bg, Image.new("RGB", (W, H), DARK), 0.55)
 
-        # Composite avatar centred vertically
+        # Shallow depth blur on avatar edges
+        av_blur = av.filter(ImageFilter.GaussianBlur(4))
+        mask = Image.new("L", (aw, ah), 0)
+        md = ImageDraw.Draw(mask)
+        md.rectangle([60, 0, aw-60, ah], fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(40))
+        av_sharp = Image.composite(av, av_blur, mask)
+
         ay = (H - ah) // 2
-        bg.paste(avatar_scaled, (0, ay))
+        bg.paste(av_sharp, (0, ay))
         return bg
 
     elif mode == "pip":
-        # bg is the cinematic clip frame
-        if bg_frames and bg_idx < len(bg_frames):
-            base = bg_frames[bg_idx].copy()
-        else:
-            base = Image.new("RGB", (W, H), DARK)
-        base = base.resize((W, H), Image.LANCZOS)
+        # Full-frame cinematic bg
+        base = cin_frame.resize((W, H), Image.LANCZOS) if cin_frame else Image.new("RGB", (W, H), DARK)
 
-        # PiP: avatar in lower-right corner, 35% of frame width
-        pip_w = int(W * 0.38)
+        # Avatar in lower-right corner at 36% width
+        pip_w = int(W * 0.36)
         pip_h = int(pip_w * ih / iw)
         pip = frame.resize((pip_w, pip_h), Image.LANCZOS)
+        pip = pip.filter(ImageFilter.GaussianBlur(1))  # subtle softening
 
-        # Dark semi-transparent border
         border = 6
-        pip_with_border = Image.new("RGB", (pip_w + border*2, pip_h + border*2), (20, 12, 8))
-        pip_with_border.paste(pip, (border, border))
+        pip_b = Image.new("RGB", (pip_w + border*2, pip_h + border*2), (18, 10, 6))
+        pip_b.paste(pip, (border, border))
 
-        px = W - pip_w - border*2 - 40
-        py = H - pip_h - border*2 - 120
-        base.paste(pip_with_border, (px, py))
+        px = W - pip_w - border*2 - 36
+        py = H - pip_h - border*2 - 110
 
-        # Subtle shadow behind pip
+        # Shadow
         shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        sd = ImageDraw.Draw(shadow)
-        sd.rectangle([px-20, py-20, px+pip_w+border*2+20, py+pip_h+border*2+20],
-                     fill=(0, 0, 0, 80))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(15))
+        ImageDraw.Draw(shadow).rectangle(
+            [px-18, py-18, px+pip_w+border*2+18, py+pip_h+border*2+18],
+            fill=(0, 0, 0, 90)
+        )
+        shadow = shadow.filter(ImageFilter.GaussianBlur(14))
         base = Image.alpha_composite(base.convert("RGBA"), shadow).convert("RGB")
-        base.paste(pip_with_border, (px, py))
+        base.paste(pip_b, (px, py))
         return base
 
-    return frame
+    # "cut" — cinematic only
+    return cin_frame.resize((W, H), Image.LANCZOS) if cin_frame else Image.new("RGB", (W, H), DARK)
 
 # ─── MOTION GRAPHICS ──────────────────────────────────────────────────────────
-def draw_text_overlay(img: Image.Image, text: str,
-                      progress: float, position: str = "lower") -> Image.Image:
-    """
-    Minimal cinematic text overlay. Fades in from bottom.
-    progress 0→1 controls opacity + slide.
-    """
+def draw_text_overlay(img: Image.Image, text: str, progress: float) -> Image.Image:
+    """Minimal cinematic text fade-in from bottom."""
     if not text or progress <= 0:
         return img
-
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-
     lines = text.strip().split("\n")
     fnt = font("sans", 52)
-    line_h = 66
+    line_h = 68
     total_h = len(lines) * line_h
-
-    if position == "lower":
-        base_y = H - 260
-    else:
-        base_y = 220
+    base_y = H - 240
 
     alpha = int(240 * ease_out(progress))
-    slide = int((1 - ease_out(progress)) * 30)
+    slide = int((1 - ease_out(progress)) * 28)
 
     for i, line in enumerate(lines):
         bb = fnt.getbbox(line)
-        tw = bb[2] - bb[0]
-        x = (W - tw) // 2
+        x = (W - (bb[2] - bb[0])) // 2
         y = base_y - total_h + i * line_h + slide
-
-        # Shadow
-        d.text((x + 2, y + 2), line, font=fnt, fill=(0, 0, 0, int(alpha * 0.6)))
-        # Main text
+        d.text((x + 2, y + 2), line, font=fnt, fill=(0, 0, 0, int(alpha * 0.5)))
         d.text((x, y), line, font=fnt, fill=(*CREAM, alpha))
 
-    # Thin separator line above text
     if progress > 0.5:
-        line_alpha = int(180 * ease_out((progress - 0.5) * 2))
-        sep_y = base_y - total_h - 20 + slide
-        d.line([(W//2 - 80, sep_y), (W//2 + 80, sep_y)],
-               fill=(*SOFT_PINK, line_alpha), width=2)
+        la = int(160 * ease_out((progress - 0.5) * 2))
+        sep_y = base_y - total_h - 18 + slide
+        d.line([(W//2 - 70, sep_y), (W//2 + 70, sep_y)], fill=(*SOFT_PINK, la), width=2)
 
-    base = img.convert("RGBA")
-    return Image.alpha_composite(base, layer).convert("RGB")
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
-def draw_heartbeat_line(img: Image.Image, t: float, alpha: int = 160) -> Image.Image:
+def draw_heartbeat_line(img: Image.Image, t: float, alpha: int = 110) -> Image.Image:
     """Subtle ECG heartbeat line at bottom of frame."""
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-    y_base = H - 60
+    y_base = H - 52
     pts = []
-    for x in range(0, W, 4):
-        phase = (x / W + t * 0.5) * math.pi * 6
-        blip_phase = (x / W + t * 0.3) % 1.0
-        if 0.45 < blip_phase < 0.55:
-            amp = int(80 * math.sin((blip_phase - 0.45) / 0.1 * math.pi))
+    for x in range(0, W, 3):
+        phase = (x / W + t * 0.4) % 1.0
+        if 0.44 < phase < 0.56:
+            amp = int(70 * math.sin((phase - 0.44) / 0.12 * math.pi))
         else:
-            amp = int(4 * math.sin(phase))
+            amp = int(3 * math.sin((x / W + t * 0.5) * math.pi * 6))
         pts.append((x, y_base - amp))
-    if len(pts) > 1:
-        for i in range(len(pts) - 1):
-            d.line([pts[i], pts[i+1]], fill=(*DEEP_ROSE, alpha), width=2)
-    base = img.convert("RGBA")
-    return Image.alpha_composite(base, layer).convert("RGB")
+    for i in range(len(pts) - 1):
+        d.line([pts[i], pts[i+1]], fill=(*DEEP_ROSE, alpha), width=2)
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
 def draw_brand_outro(img: Image.Image, progress: float) -> Image.Image:
-    """Final brand card fade-in."""
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-    a = int(255 * ease_out(progress))
+    a = int(200 * ease_out(progress))
+    d.rectangle([0, 0, W, H], fill=(6, 4, 2, a))
+    if progress > 0.25:
+        fa = int(255 * ease_out((progress - 0.25) / 0.75))
+        fn1 = font("serif", 76)
+        fn2 = font("sans", 40)
+        t1 = "Dr. P's Corner"
+        t2 = "Health Without The Complexity"
+        bb1 = fn1.getbbox(t1)
+        bb2 = fn2.getbbox(t2)
+        d.text(((W - (bb1[2]-bb1[0])) // 2, H//2 - 65), t1, font=fn1, fill=(*CREAM, fa))
+        d.text(((W - (bb2[2]-bb2[0])) // 2, H//2 + 44), t2, font=fn2, fill=(*SOFT_PINK, fa))
+        d.line([(W//2 - 150, H//2 + 24), (W//2 + 150, H//2 + 24)],
+               fill=(*NUDE_BROWN, int(fa * 0.55)), width=2)
+    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
-    # Dark overlay
-    d.rectangle([0, 0, W, H], fill=(8, 5, 3, int(180 * ease_out(progress))))
-
-    if progress > 0.3:
-        fa = int(255 * ease_out((progress - 0.3) / 0.7))
-        fn1 = font("serif", 72)
-        fn2 = font("sans", 38)
-        bb1 = fn1.getbbox("Dr. P's Corner")
-        bb2 = fn2.getbbox("Health Without The Complexity")
-        d.text(((W - (bb1[2]-bb1[0])) // 2, H//2 - 60),
-               "Dr. P's Corner", font=fn1, fill=(*CREAM, fa))
-        d.text(((W - (bb2[2]-bb2[0])) // 2, H//2 + 40),
-               "Health Without The Complexity", font=fn2, fill=(*SOFT_PINK, fa))
-        # Separator
-        d.line([(W//2 - 140, H//2 + 20), (W//2 + 140, H//2 + 20)],
-               fill=(*NUDE_BROWN, int(fa * 0.6)), width=2)
-
-    base = img.convert("RGBA")
-    return Image.alpha_composite(base, layer).convert("RGB")
-
-def crossfade(frame_a: Image.Image, frame_b: Image.Image, t: float) -> Image.Image:
+def crossfade(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
     t = clamp(t)
-    if t <= 0:
-        return frame_a
-    if t >= 1:
-        return frame_b
-    return Image.blend(frame_a.convert("RGB"), frame_b.convert("RGB"), t)
+    if t <= 0: return a.convert("RGB")
+    if t >= 1: return b.convert("RGB")
+    return Image.blend(a.convert("RGB"), b.convert("RGB"), t)
 
-# ─── WAVESPEED API ────────────────────────────────────────────────────────────
+# ─── WAVESPEED REST API ───────────────────────────────────────────────────────
 def ws_headers(key: str) -> dict:
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 def img_to_b64(img: Image.Image) -> str:
-    import io as _io
     buf = _io.BytesIO()
     img.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
-def file_to_b64(path: str) -> str:
-    ext = Path(path).suffix.lstrip(".").lower()
-    mime = "jpeg" if ext in ("jpg","jpeg") else "png"
-    with open(path, "rb") as f:
-        return f"data:image/{mime};base64," + base64.b64encode(f.read()).decode()
+def _submit(key: str, model: str, payload: dict, max_retries: int = 8) -> str:
+    """Submit a task; returns task_id. Retries on 429."""
+    for attempt in range(max_retries):
+        r = requests.post(
+            f"{WAVESPEED_BASE}/{model}",
+            headers=ws_headers(key), json=payload, timeout=60,
+        )
+        if r.status_code == 429:
+            wait = min(30 * (2 ** attempt), 240)
+            print(f"    429 rate limit — waiting {wait}s (attempt {attempt+1}/{max_retries})", flush=True)
+            time.sleep(wait)
+            continue
+        r.raise_for_status()
+        return r.json()["data"]["id"]
+    raise RuntimeError(f"Max retries exceeded for {model}")
 
-def _make_base_image(scene_id: str) -> Image.Image:
-    """
-    Create a dark base image appropriate for each scene type.
-    google/nano-banana-2/edit transforms this base using the prompt.
-    """
-    base_colors = {
-        "bloodstream":    (60,  8,  8),   # deep blood red
-        "unhealthy_fat":  (18, 12,  6),   # near-black warm
-        "plaque_buildup": (45, 15,  8),   # dark amber-red
-        "sedentary":      ( 8,  8, 12),   # near-black cool
-        "diabetes":       (55, 12,  5),   # dark crimson-orange
-        "blood_pressure": (70, 10,  8),   # dark red
-        "stress":         ( 8,  8, 16),   # dark charcoal-blue
-        "smoking_reveal": ( 6,  6,  6),   # near-black neutral
-        "artery_damage":  (40, 10,  5),   # dark crimson
+def _poll(key: str, task_id: str, timeout: int = 900) -> str:
+    """Poll until completed; returns output URL."""
+    deadline = time.time() + timeout
+    interval = 5
+    while time.time() < deadline:
+        r = requests.get(
+            f"{WAVESPEED_BASE}/predictions/{task_id}/result",
+            headers=ws_headers(key), timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()["data"]
+        status = data.get("status", "")
+        if status == "completed":
+            outputs = data.get("outputs", [])
+            if outputs:
+                return outputs[0]
+            raise RuntimeError("Task completed but no outputs returned")
+        if status in ("failed", "cancelled"):
+            raise RuntimeError(f"Task {status}: {data.get('error', 'unknown')}")
+        print(f"    [{task_id[:10]}] {status}", flush=True)
+        time.sleep(interval)
+        interval = min(interval * 1.15, 15)
+    raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+
+def _download(url: str, suffix: str = ".mp4") -> Path:
+    tmp = Path(tempfile.mktemp(suffix=suffix))
+    urllib.request.urlretrieve(url, tmp)
+    return tmp
+
+# ─── SCENE GENERATION ─────────────────────────────────────────────────────────
+def _make_dark_base(scene_id: str) -> Image.Image:
+    """Dark noisy base image for Nano Banana inpainting."""
+    colors = {
+        "bloodstream":    (55,  8,  8),
+        "unhealthy_fat":  (18, 12,  6),
+        "plaque_buildup": (45, 14,  6),
+        "sedentary":      ( 8,  8, 12),
+        "diabetes":       (55, 12,  5),
+        "blood_pressure": (65,  9,  7),
+        "stress":         ( 8,  8, 15),
+        "smoking_reveal": ( 6,  6,  6),
+        "artery_damage":  (40, 10,  4),
     }
-    color = base_colors.get(scene_id, (10, 8, 6))
-    img = Image.new("RGB", (1024, 1820), color)
-    # Add subtle noise texture so the model has something to work with
-    arr = np.array(img).astype(np.int16)
-    noise = np.random.randint(-12, 13, arr.shape, dtype=np.int16)
-    arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    color = colors.get(scene_id, (10, 8, 6))
+    arr = np.full((1024, 576, 3), color, dtype=np.int16)
+    arr = np.clip(arr + np.random.randint(-14, 15, arr.shape, dtype=np.int16), 0, 255).astype(np.uint8)
     return Image.fromarray(arr)
 
-def _upload_image(client, img: Image.Image) -> str:
-    """Upload a PIL image and return the WaveSpeed CDN URL."""
-    import io as _io
-    buf = _io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    tmp.write(buf.getvalue())
-    tmp.close()
+def generate_still(key: str, scene: dict, cache_dir: Path, t2i_model: str = T2I_MODEL) -> Image.Image:
+    """Generate a cinematic still for the scene; caches result."""
+    sid = scene["id"]
+    still_path = cache_dir / f"{sid}_still.png"
+
+    if still_path.exists():
+        print(f"  [{sid}] Loading cached still", flush=True)
+        return Image.open(still_path).convert("RGB")
+
+    print(f"  [{sid}] Generating still with {t2i_model}…", flush=True)
+
+    # Build payload for Nano Banana 2 Edit
+    base_img = _make_dark_base(sid)
+    b64_base = img_to_b64(base_img)
+    payload = {
+        "images":               [b64_base],
+        "prompt":               scene["t2i_prompt"],
+        "resolution":           "1k",
+        "output_format":        "png",
+        "enable_base64_output": False,
+        "enable_image_search":  False,
+        "enable_sync_mode":     False,
+        "enable_web_search":    False,
+    }
+
     try:
-        url = client.upload(tmp.name)
-    finally:
-        os.unlink(tmp.name)
-    return url
+        task_id = _submit(key, t2i_model, payload)
+        print(f"    Task ID: {task_id}", flush=True)
+        url = _poll(key, task_id, timeout=600)
+    except Exception as e:
+        print(f"    NB2 Edit failed ({e}), falling back to {T2I_FALLBACK}…", flush=True)
+        payload_fb = {
+            "prompt": scene["t2i_prompt"],
+            "num_inference_steps": 28,
+            "guidance_scale": 7.5,
+            "size": "576*1024",
+        }
+        task_id = _submit(key, T2I_FALLBACK, payload_fb)
+        print(f"    Fallback task ID: {task_id}", flush=True)
+        print(f"    Fallback task ID: {task_id}", flush=True)
+        url = _poll(key, task_id, timeout=600)
 
-def generate_image(key: str, prompt: str, model: str = T2I_MODEL,
-                   scene_id: str = "default", size: str = "720*1280") -> Image.Image:
-    """
-    Generate a cinematic still via google/nano-banana-2/edit.
-    Uploads a dark base image, then edits it into the target scene.
-    """
-    import wavespeed
-    client = wavespeed.Client(api_key=key)
+    tmp = _download(url, ".png")
+    still = Image.open(tmp).convert("RGB")
+    tmp.unlink(missing_ok=True)
+    still = still.resize((W, H), Image.LANCZOS)
+    still.save(still_path)
+    print(f"    Still saved → {still_path}", flush=True)
+    return still
 
-    base = _make_base_image(scene_id)
-    print(f"    Uploading base image…", flush=True)
-    base_url = _upload_image(client, base)
+def animate_still(key: str, scene: dict, still: Image.Image, cache_dir: Path, i2v_model: str = I2V_MODEL) -> list:
+    """Animate a still to a video clip; returns list of PIL frames."""
+    sid = scene["id"]
+    clip_path = cache_dir / f"{sid}_clip.mp4"
+    dur = scene["end"] - scene["start"]
+    n_frames = int(dur * FPS)
 
-    out = client.run(model, {
-        "images":                [base_url],
-        "prompt":                prompt,
-        "resolution":            "1k",
-        "output_format":         "png",
-        "enable_base64_output":  False,
-        "enable_image_search":   False,
-        "enable_sync_mode":      False,
-        "enable_web_search":     False,
-    }, timeout=300)
-    url = out["outputs"][0]
-    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    urllib.request.urlretrieve(url, tmp.name)
-    img = Image.open(tmp.name).convert("RGB")
-    os.unlink(tmp.name)
-    return img
+    if clip_path.exists():
+        print(f"  [{sid}] Loading cached clip", flush=True)
+        return _load_video_frames_chunked(clip_path, n_frames)
 
-def animate_image(key: str, img: Image.Image, prompt: str,
-                  duration_sec: int = 4, model: str = I2V_MODEL) -> Path:
-    """Animate a still image into a video clip via WaveSpeed I2V SDK."""
-    import wavespeed
-    client = wavespeed.Client(api_key=key)
-    num_frames = min(81, max(16, duration_sec * 16))
-    out = client.run(model, {
-        "image": img_to_b64(img),
-        "prompt": prompt,
-        "num_frames": num_frames,
-        "guidance_scale": 6.0,
-        "num_inference_steps": 30,
-    }, timeout=600)
-    url = out["outputs"][0]
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    urllib.request.urlretrieve(url, tmp.name)
-    return Path(tmp.name)
+    print(f"  [{sid}] Animating with {i2v_model}…", flush=True)
+    num_frames_api = min(81, max(16, int(dur * 16)))
+    payload = {
+        "image":                img_to_b64(still),
+        "prompt":               scene["i2v_prompt"],
+        "num_frames":           num_frames_api,
+        "guidance_scale":       6.0,
+        "num_inference_steps":  30,
+    }
+    task_id = _submit(key, i2v_model, payload)
+    print(f"    Task ID: {task_id}", flush=True)
+    url = _poll(key, task_id, timeout=900)
 
-# ─── VIDEO READER ─────────────────────────────────────────────────────────────
-def load_video_frames(path: str, target_fps: int = FPS) -> list:
-    """Load all frames from a video, resampled to target_fps."""
+    tmp = _download(url, ".mp4")
+    shutil.move(str(tmp), str(clip_path))
+    print(f"    Clip saved → {clip_path}", flush=True)
+    return _load_video_frames_chunked(clip_path, n_frames)
+
+# ─── MEMORY-SAFE VIDEO READER ─────────────────────────────────────────────────
+def _load_video_frames_chunked(path: Path, target_count: int) -> list:
+    """Load video frames, scaling to target_count, avoiding full-RAM load."""
     import imageio
+    import imageio_ffmpeg
+    os.environ["IMAGEIO_FFMPEG_EXE"] = imageio_ffmpeg.get_ffmpeg_exe()
+
     reader = imageio.get_reader(str(path))
     meta = reader.get_meta_data()
-    src_fps = meta.get("fps", 30)
-    raw = [Image.fromarray(f).convert("RGB") for f in reader]
+    src_fps = meta.get("fps", FPS)
+    src_dur = meta.get("duration", target_count / FPS)
+    src_count = max(1, int(src_fps * src_dur))
+
+    frames = []
+    for raw in reader:
+        frames.append(Image.fromarray(raw).convert("RGB"))
     reader.close()
 
-    if abs(src_fps - target_fps) < 0.5:
-        return raw
-
-    # Simple linear resampling
-    duration = len(raw) / src_fps
-    n_out = int(duration * target_fps)
-    out = []
-    for i in range(n_out):
-        src_i = int(i / target_fps * src_fps)
-        out.append(raw[min(src_i, len(raw)-1)])
-    return out
-
-def extend_frames(frames: list, n: int) -> list:
     if not frames:
-        return [Image.new("RGB", (W, H), DARK)] * n
+        return [Image.new("RGB", (W, H), DARK)] * target_count
+
+    # Resample to target_count
     result = []
-    while len(result) < n:
-        result.extend(frames)
-    return result[:n]
+    for i in range(target_count):
+        src_i = int(i / target_count * len(frames))
+        result.append(frames[min(src_i, len(frames) - 1)])
+    return result
+
+def _load_avatar_seekable(path: str) -> "AvatarSeeker":
+    """Return an object that gives avatar frames by index without full RAM load."""
+    return AvatarSeeker(path)
+
+class AvatarSeeker:
+    """Lazy avatar frame reader — loads all frames once, exposes by index."""
+    def __init__(self, path: str):
+        import imageio
+        import imageio_ffmpeg
+        os.environ["IMAGEIO_FFMPEG_EXE"] = imageio_ffmpeg.get_ffmpeg_exe()
+        reader = imageio.get_reader(path)
+        meta = reader.get_meta_data()
+        self.fps = meta.get("fps", 30)
+        self.duration = meta.get("duration", 0)
+        # Stream at reduced resolution to save memory
+        self._frames = []
+        for raw in reader:
+            img = Image.fromarray(raw).convert("RGB")
+            # Downsample to 640×360 max during loading
+            if img.width > 640:
+                img = img.resize((640, int(img.height * 640 / img.width)), Image.BILINEAR)
+            self._frames.append(img)
+        reader.close()
+        self.n = len(self._frames)
+        print(f"  Avatar: {self.n} frames @ {self.fps}fps = {self.n/self.fps:.1f}s")
+
+    def at(self, t: float) -> Image.Image:
+        idx = int(t * self.fps)
+        return self._frames[min(idx, self.n - 1)]
+
+# ─── AUDIO EXTRACTION ─────────────────────────────────────────────────────────
+def extract_audio(video_path: str, out_path: Path) -> bool:
+    """Extract audio track from avatar video."""
+    import imageio_ffmpeg
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    ret = os.system(f'"{ffmpeg}" -y -i "{video_path}" -vn -acodec aac -b:a 192k "{out_path}" -loglevel error')
+    return ret == 0 and out_path.exists()
+
+def merge_audio(video_path: str, audio_path: str, out_path: str) -> bool:
+    """Merge audio into the final video."""
+    import imageio_ffmpeg
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = (
+        f'"{ffmpeg}" -y -i "{video_path}" -i "{audio_path}" '
+        f'-c:v copy -c:a aac -b:a 192k -shortest "{out_path}" -loglevel error'
+    )
+    return os.system(cmd) == 0
 
 # ─── MAIN PIPELINE ────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Dr. P Cinematic Trailer Generator")
-    parser.add_argument("--avatar", required=True, help="Path to avatar video (.mp4)")
-    parser.add_argument("--output", default="drp_trailer.mp4", help="Output path")
-    parser.add_argument("--api-key", default=None, help="WaveSpeed API key")
-    parser.add_argument("--cache-dir", default="./trailer_cache",
-                        help="Directory to cache generated clips (avoids re-generation)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Skip API calls, use solid colour placeholders")
-    parser.add_argument("--t2i-model", default=T2I_MODEL,
-                        help=f"WaveSpeed T2I model (default: {T2I_MODEL})")
-    parser.add_argument("--i2v-model", default=I2V_MODEL,
-                        help=f"WaveSpeed I2V model (default: {I2V_MODEL})")
+    parser = argparse.ArgumentParser(description="Dr. P Cinematic Medical Trailer Generator")
+    parser.add_argument("--avatar",   default=AVATAR_PATH, help="Path to avatar video")
+    parser.add_argument("--output",   default="drp_trailer.mp4")
+    parser.add_argument("--api-key",  default=None)
+    parser.add_argument("--cache-dir", default="./trailer_cache")
+    parser.add_argument("--dry-run",  action="store_true",
+                        help="Skip API calls, use dark colour placeholders")
+    parser.add_argument("--t2i-model", default=T2I_MODEL)
+    parser.add_argument("--i2v-model", default=I2V_MODEL)
+    parser.add_argument("--skip-i2v", action="store_true",
+                        help="Use generated stills without animating (faster test)")
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get("WAVESPEED_API_KEY", "")
     if not api_key and not args.dry_run:
-        sys.exit("Error: provide --api-key or WAVESPEED_API_KEY in .env")
+        sys.exit("Error: WAVESPEED_API_KEY not set")
+
+    t2i_model = args.t2i_model
+    i2v_model = args.i2v_model
 
     cache = Path(args.cache_dir)
     cache.mkdir(exist_ok=True)
 
-    # ── Load avatar video ──────────────────────────────────────────────────
+    # ── Load avatar (memory-safe) ──────────────────────────────────────────
     print("Loading avatar video…")
-    avatar_frames = load_video_frames(args.avatar, FPS)
-    avatar_duration = len(avatar_frames) / FPS
-    print(f"  {len(avatar_frames)} frames @ {FPS}fps = {avatar_duration:.1f}s")
+    avatar = AvatarSeeker(args.avatar)
+
+    # ── Extract audio ──────────────────────────────────────────────────────
+    audio_path = cache / "avatar_audio.aac"
+    has_audio = False
+    if not audio_path.exists():
+        print("Extracting audio from avatar…")
+        has_audio = extract_audio(args.avatar, audio_path)
+    else:
+        has_audio = True
+    print(f"  Audio: {'extracted' if has_audio else 'unavailable'}")
 
     # ── Generate / load cinematic clips ──────────────────────────────────
-    scene_clips: dict = {}   # scene_id → list of PIL frames (1080×1920)
+    print("\nGenerating cinematic clips…")
+    scene_frames: dict = {}   # scene_id → list[PIL.Image]
 
     for scene in SCENES:
         sid = scene["id"]
         if scene["t2i_prompt"] is None:
-            scene_clips[sid] = None   # avatar-only scene
+            scene_frames[sid] = None
             continue
 
         dur = scene["end"] - scene["start"]
-        n_frames = int(dur * FPS)
-
-        clip_path = cache / f"{sid}_clip.mp4"
-        still_path = cache / f"{sid}_still.png"
-
-        if clip_path.exists():
-            print(f"[{sid}] Loading cached clip…")
-            raw = load_video_frames(str(clip_path), FPS)
-            scene_clips[sid] = extend_frames(raw, n_frames)
-            continue
+        n = int(dur * FPS)
 
         if args.dry_run:
-            print(f"[{sid}] Dry-run placeholder")
-            placeholder = Image.new("RGB", (W, H), (18, 10, 6))
-            scene_clips[sid] = [placeholder] * n_frames
+            colors = {
+                "bloodstream": (40, 8, 8), "unhealthy_fat": (18, 12, 6),
+                "plaque_buildup": (50, 14, 6), "sedentary": (8, 8, 14),
+                "diabetes": (55, 12, 5), "blood_pressure": (65, 9, 7),
+                "stress": (8, 8, 18), "smoking_reveal": (8, 6, 6),
+                "artery_damage": (45, 10, 4),
+            }
+            placeholder = Image.new("RGB", (W, H), colors.get(sid, (14, 10, 8)))
+            scene_frames[sid] = [placeholder] * n
             continue
 
-        print(f"[{sid}] Generating still with {args.t2i_model}…")
-        if still_path.exists():
-            still = Image.open(still_path).convert("RGB")
+        print(f"\n[{sid}]")
+        still = generate_still(api_key, scene, cache, t2i_model)
+
+        if args.skip_i2v:
+            scene_frames[sid] = [still.copy()] * n
         else:
-            still = generate_image(api_key, scene["t2i_prompt"],
-                                   model=args.t2i_model, scene_id=sid)
-            still = still.resize((W, H), Image.LANCZOS)
-            still.save(still_path)
-            print(f"  Still saved → {still_path}")
+            scene_frames[sid] = animate_still(api_key, scene, still, cache, i2v_model)
 
-        print(f"[{sid}] Animating with {args.i2v_model}…")
-        anim_path = animate_image(api_key, still,
-                                  scene.get("i2v_prompt", scene["t2i_prompt"]),
-                                  duration_sec=max(3, int(dur)),
-                                  model=args.i2v_model)
-        # Save to cache
-        import shutil
-        shutil.move(str(anim_path), str(clip_path))
-        print(f"  Clip saved → {clip_path}")
-
-        raw = load_video_frames(str(clip_path), FPS)
-        scene_clips[sid] = extend_frames(raw, n_frames)
-
-    # ── Build final frame sequence ────────────────────────────────────────
+    # ── Assemble final frame sequence ─────────────────────────────────────
     print("\nAssembling frames…")
-    total_dur = max(s["end"] for s in SCENES) + 3.0  # +3s for outro fade
+    total_dur = max(s["end"] for s in SCENES) + 3.5   # +3.5s brand outro
     total_frames = int(total_dur * FPS)
-    all_frames: list = []
 
-    # Pre-build a lookup: for each global frame, which scene are we in?
-    def get_scene_at(t: float):
-        active = [s for s in SCENES if s["start"] <= t < s["end"] + 0.5]
-        return active[-1] if active else SCENES[-1]
+    def active_scene(t: float):
+        for s in reversed(SCENES):
+            if s["start"] <= t:
+                return s
+        return SCENES[0]
 
-    FADE_DUR = 0.5   # crossfade seconds between scenes
+    FADE = 0.45   # crossfade seconds
+    video_out = cache / "raw_video.mp4"
+
+    import imageio
+    import imageio_ffmpeg
+    os.environ["IMAGEIO_FFMPEG_EXE"] = imageio_ffmpeg.get_ffmpeg_exe()
+
+    writer = imageio.get_writer(
+        str(video_out), fps=FPS, codec="libx264", quality=9,
+        ffmpeg_params=[
+            "-preset", "slow", "-pix_fmt", "yuv420p",
+            "-crf", "17", "-movflags", "+faststart", "-profile:v", "high",
+        ],
+        macro_block_size=1,
+    )
+
     prev_frame: Image.Image = None
-    last_scene_id: str = None
+    prev_scene_id: str = None
 
     for fi in range(total_frames):
         t = fi / FPS
-        scene = get_scene_at(t)
+        scene = active_scene(t)
         sid = scene["id"]
-        dur = scene["end"] - scene["start"]
         local_t = t - scene["start"]
-        local_progress = clamp(local_t / dur)
+        dur = scene["end"] - scene["start"]
+        local_p = clamp(local_t / max(dur, 0.01))
 
-        # ── Build base frame ──────────────────────────────────────────────
-        av_idx = min(int(t * FPS), len(avatar_frames) - 1)
-        av_frame = avatar_frames[av_idx]
+        # Get avatar frame
+        av = avatar.at(t)
 
-        cin_frames = scene_clips.get(sid)
-        cin_idx = int(local_t * FPS) if cin_frames else 0
+        # Get cinematic frame
+        cin_list = scene_frames.get(sid)
+        cin_idx = int(local_t * FPS)
+        cin = (cin_list[min(cin_idx, len(cin_list)-1)].copy()
+               if cin_list else None)
 
-        if scene["avatar_mode"] == "full" or cin_frames is None:
-            base = avatar_to_portrait(av_frame, "full")
-        elif scene["avatar_mode"] == "pip":
-            pip_frames = cin_frames
-            pip_frame = pip_frames[min(cin_idx, len(pip_frames)-1)] if pip_frames else None
-            if pip_frame:
-                pip_frame = pip_frame.resize((W, H), Image.LANCZOS)
-            base = avatar_to_portrait(av_frame, "pip",
-                                      bg_frames=[pip_frame] if pip_frame else None,
-                                      bg_idx=0)
-        else:  # "cut" — cinematic only
-            cin_f = cin_frames[min(cin_idx, len(cin_frames)-1)]
-            base = cin_f.resize((W, H), Image.LANCZOS)
+        # Compose base
+        mode = scene["avatar_mode"]
+        base = avatar_to_portrait(av, mode, cin)
 
-        # ── Colour grade ──────────────────────────────────────────────────
+        # Colour grade + vignette
         base = apply_cinematic_grade(base)
-        base = apply_vignette(base, 0.55 if scene["avatar_mode"] == "cut" else 0.4)
+        base = apply_vignette(base, 0.58 if mode == "cut" else 0.42)
 
-        # ── Scene crossfade ───────────────────────────────────────────────
-        if last_scene_id != sid and prev_frame is not None:
-            # Cross-fade the transition
-            fade_frames_count = int(FADE_DUR * FPS)
-            fi_in_fade = 0
-        if prev_frame is not None and last_scene_id != sid:
-            fi_in_fade = 0
-        # track fade within first FADE_DUR of a new scene
-        fade_t = clamp(local_t / FADE_DUR) if local_t < FADE_DUR and prev_frame is not None else 1.0
-        if fade_t < 1.0:
-            base = crossfade(prev_frame, base, ease_in_out(fade_t))
+        # Crossfade on scene change
+        if prev_frame is not None and sid != prev_scene_id:
+            fade_t = clamp(local_t / FADE)
+            if fade_t < 1.0:
+                base = crossfade(prev_frame, base, ease_in_out(fade_t))
 
-        # ── Heartbeat line ────────────────────────────────────────────────
-        base = draw_heartbeat_line(base, t, alpha=100)
+        # ECG heartbeat line
+        base = draw_heartbeat_line(base, t, alpha=95)
 
-        # ── Text overlay ─────────────────────────────────────────────────
-        if scene["text"]:
-            text_in  = clamp(local_t / 1.2)
-            text_out = clamp((dur - local_t) / 0.6)
-            text_prog = min(text_in, text_out)
-            base = draw_text_overlay(base, scene["text"], text_prog)
+        # Text overlay
+        if scene.get("text"):
+            t_in  = clamp(local_t / 1.0)
+            t_out = clamp((dur - local_t) / 0.5)
+            base = draw_text_overlay(base, scene["text"], min(t_in, t_out))
 
-        # ── Outro brand card ──────────────────────────────────────────────
-        outro_start = max(s["end"] for s in SCENES) + 0.5
-        if t >= outro_start:
-            outro_prog = clamp((t - outro_start) / 2.5)
-            base = draw_brand_outro(base, outro_prog)
+        # Brand outro
+        outro_t = max(s["end"] for s in SCENES) + 0.5
+        if t >= outro_t:
+            prog = clamp((t - outro_t) / 3.0)
+            base = draw_brand_outro(base, prog)
 
-        all_frames.append(base)
+        writer.append_data(np.array(base))
         prev_frame = base
-        last_scene_id = sid
+        prev_scene_id = sid
 
         if fi % (FPS * 5) == 0:
             print(f"  [{fi}/{total_frames}] {t:.1f}s / {total_dur:.1f}s", flush=True)
 
-    # ── Encode video ──────────────────────────────────────────────────────
-    print(f"\nEncoding {len(all_frames)} frames → {args.output}")
-    import imageio
-    import imageio_ffmpeg
-    import os as _os
-    _os.environ["IMAGEIO_FFMPEG_EXE"] = imageio_ffmpeg.get_ffmpeg_exe()
-
-    writer = imageio.get_writer(
-        args.output,
-        fps=FPS,
-        codec="libx264",
-        quality=9,
-        ffmpeg_params=[
-            "-preset", "slow",
-            "-pix_fmt", "yuv420p",
-            "-crf", "18",
-            "-movflags", "+faststart",
-            "-profile:v", "high",
-        ],
-        macro_block_size=1,
-    )
-    for frame in all_frames:
-        writer.append_data(np.array(frame))
     writer.close()
+    print(f"  Raw video → {video_out}")
 
-    size_mb = os.path.getsize(args.output) / 1024 / 1024
-    print(f"\n✓ Done!  {args.output}  ({size_mb:.1f} MB)")
-    print("\nNext steps:")
-    print("  • Add soundtrack:  python add_soundtrack.py --video drp_trailer.mp4")
-    print("  • Verify WaveSpeed model names if any 404 errors occur:")
-    print(f"    T2I model used: {args.t2i_model}")
-    print(f"    I2V model used: {args.i2v_model}")
-    print("  • Check model names at: https://wavespeed.ai/models")
+    # ── Merge audio ───────────────────────────────────────────────────────
+    final_out = args.output
+    if has_audio:
+        print(f"Merging audio into {final_out}…")
+        ok = merge_audio(str(video_out), str(audio_path), final_out)
+        if not ok:
+            print("  Audio merge failed — copying raw video")
+            shutil.copy(str(video_out), final_out)
+    else:
+        shutil.copy(str(video_out), final_out)
+
+    size_mb = os.path.getsize(final_out) / 1024 / 1024
+    print(f"\n✓ Done! {final_out}  ({size_mb:.1f} MB)")
+    print("\nNext step — add soundtrack:")
+    print(f"  python add_soundtrack.py --video {final_out}")
 
 
 if __name__ == "__main__":

@@ -8,8 +8,8 @@ export const BlockageFlash: React.FC = () => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
-  // Main flash onset
-  const flashFrame = Math.round(durationInFrames * 0.645);
+  // Main flash onset — "what we doctors call plaque" moment (~72%)
+  const flashFrame = Math.round(durationInFrames * 0.72);
 
   const getFlash = () => {
     const r = frame - flashFrame;

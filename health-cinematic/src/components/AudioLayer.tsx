@@ -43,8 +43,8 @@ export const AudioLayer: React.FC = () => {
     );
   };
 
-  // Boom: triggered at ~64.5% of video
-  const boomStart = Math.round(durationInFrames * 0.645);
+  // Boom: triggered at ~72% — "what we doctors call plaque"
+  const boomStart = Math.round(durationInFrames * 0.72);
 
   // Riser: starts at phase 3 onset, builds and then fades
   const riserStart = Math.round(durationInFrames * PHASE_3_START);

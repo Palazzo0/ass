@@ -46,7 +46,7 @@ export const BloodCells: React.FC = () => {
   const phase2Boost = interpolate(p2, [0, 1], [1, 1.7], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   // Pre-flash blood RUSH: cells surge faster and grow just before the impact
-  const flashFrame = Math.round(durationInFrames * 0.645);
+  const flashFrame = Math.round(durationInFrames * 0.72);
   const rushSpeed = interpolate(
     frame,
     [flashFrame - 35, flashFrame - 10, flashFrame, flashFrame + 5],

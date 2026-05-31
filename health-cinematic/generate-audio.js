@@ -166,8 +166,8 @@ fs.mkdirSync(dir, { recursive: true });
 
 console.log("Generating audio files…");
 
-writeWav(path.join(dir, "drone.wav"), makeDrone(16));
-console.log("  ✓ drone.wav (16 s ambient drone)");
+writeWav(path.join(dir, "drone.wav"), makeDrone(40));
+console.log("  ✓ drone.wav (40 s ambient drone)");
 
 writeWav(path.join(dir, "heartbeat-loop.wav"), makeHeartbeatLoop());
 console.log("  ✓ heartbeat-loop.wav (4.8 s loop, 4 beats)");

@@ -6,6 +6,7 @@ import { Vignette } from "./components/Vignette";
 import { SmokeParticles } from "./components/SmokeParticles";
 import { DustMotes } from "./components/DustMotes";
 import { ArteryOverlay } from "./components/ArteryOverlay";
+import { ArteryCrossSection } from "./components/ArteryCrossSection";
 import { BloodCells } from "./components/BloodCells";
 import { HeartbeatGlow } from "./components/HeartbeatGlow";
 import { CholesterolParticles } from "./components/CholesterolParticles";
@@ -30,7 +31,10 @@ export const CinematicOverlay: React.FC = () => {
       {/* 4. Warm floating dust motes */}
       <DustMotes />
 
-      {/* 5. Transparent artery network — draws progressively, glows, narrows */}
+      {/* 5. Interior artery cross-section — shows plaque buildup in Phase 3/4 */}
+      <ArteryCrossSection />
+
+      {/* 6. Transparent artery network — draws progressively, glows, narrows */}
       <ArteryOverlay />
 
       {/* 5. Flowing blood cell particles — slows to crawl in phase 3 */}

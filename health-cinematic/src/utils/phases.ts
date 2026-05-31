@@ -1,14 +1,17 @@
-// Dialogue phase timing as fraction of total video duration
-// Phase 1: "Many of the things you do every day are slowly blocking your blood vessels…"
-// Phase 2: "you may not even know it until it causes a stroke or heart attack"
-// Phase 3: "The scary part is that for many people, it starts years before the symptoms even appear"
+// Dialogue phase timing as fraction of total video duration (~37 s)
+// Phase 1: "blood vessels carry oxygen and nutrients…" intro setup
+// Phase 2: lifestyle habits — sedentary, smoking, diet, hypertension, meds, inflammation
+// Phase 3: plaque formation — "cholesterol sticks to the walls…"
+// Phase 4: narrowing — "smaller and tighter… that's when things get dangerous"
 
 export const PHASE_1_START = 0;
-export const PHASE_1_END = 0.40;   // 0 → 40%
-export const PHASE_2_START = 0.38;
-export const PHASE_2_END = 0.72;   // 38 → 72%
-export const PHASE_3_START = 0.70;
-export const PHASE_3_END = 1.0;    // 70 → 100%
+export const PHASE_1_END   = 0.24;   // 0 → 24%  (~0–8.9 s)
+export const PHASE_2_START = 0.22;
+export const PHASE_2_END   = 0.58;   // 22 → 58% (~8.2–21.6 s)
+export const PHASE_3_START = 0.56;
+export const PHASE_3_END   = 1.0;    // 56 → 100% (~20.9–37.3 s)
+export const PHASE_4_START = 0.80;
+export const PHASE_4_END   = 1.0;    // 80 → 100% (~29.8–37.3 s)
 
 export const getPhaseProgress = (
   frame: number,
@@ -17,8 +20,8 @@ export const getPhaseProgress = (
   end: number
 ): number => {
   const startFrame = durationInFrames * start;
-  const endFrame = durationInFrames * end;
+  const endFrame   = durationInFrames * end;
   if (frame <= startFrame) return 0;
-  if (frame >= endFrame) return 1;
+  if (frame >= endFrame)   return 1;
   return (frame - startFrame) / (endFrame - startFrame);
 };

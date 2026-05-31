@@ -541,41 +541,18 @@ def file_to_b64(path: str) -> str:
     with open(path, "rb") as f:
         return f"data:image/{mime};base64," + base64.b64encode(f.read()).decode()
 
-def poll(key: str, task_id: str, timeout: int = 600) -> str:
-    deadline = time.time() + timeout
-    interval = 4
-    while time.time() < deadline:
-        r = requests.get(f"{WAVESPEED_BASE}/predictions/{task_id}/fetch",
-                         headers=ws_headers(key), timeout=20)
-        r.raise_for_status()
-        data = r.json()["data"]
-        status = data.get("status", "")
-        print(f"    [{task_id[:10]}] {status}", flush=True)
-        if status == "completed":
-            out = data.get("outputs", [])
-            if out:
-                return out[0]
-            raise RuntimeError("Completed but no outputs")
-        if status in ("failed", "cancelled"):
-            raise RuntimeError(f"Task {status}: {data.get('error')}")
-        time.sleep(interval)
-        interval = min(interval * 1.2, 12)
-    raise TimeoutError("Task timed out")
-
 def generate_image(key: str, prompt: str, model: str = T2I_MODEL,
                    size: str = "720*1280") -> Image.Image:
-    """Generate a cinematic still via WaveSpeed T2I."""
-    payload = {
+    """Generate a cinematic still via WaveSpeed T2I SDK."""
+    import wavespeed
+    client = wavespeed.Client(api_key=key)
+    out = client.run(model, {
         "prompt": prompt,
         "size": size,
         "num_inference_steps": 30,
         "guidance_scale": 7.5,
-    }
-    r = requests.post(f"{WAVESPEED_BASE}/{model}",
-                      headers=ws_headers(key), json=payload, timeout=60)
-    r.raise_for_status()
-    task_id = r.json()["data"]["id"]
-    url = poll(key, task_id)
+    }, timeout=300)
+    url = out["outputs"][0]
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     urllib.request.urlretrieve(url, tmp.name)
     img = Image.open(tmp.name).convert("RGB")
@@ -584,20 +561,18 @@ def generate_image(key: str, prompt: str, model: str = T2I_MODEL,
 
 def animate_image(key: str, img: Image.Image, prompt: str,
                   duration_sec: int = 4, model: str = I2V_MODEL) -> Path:
-    """Animate a still image into a video clip via WaveSpeed I2V."""
+    """Animate a still image into a video clip via WaveSpeed I2V SDK."""
+    import wavespeed
+    client = wavespeed.Client(api_key=key)
     num_frames = min(81, max(16, duration_sec * 16))
-    payload = {
+    out = client.run(model, {
         "image": img_to_b64(img),
         "prompt": prompt,
         "num_frames": num_frames,
         "guidance_scale": 6.0,
         "num_inference_steps": 30,
-    }
-    r = requests.post(f"{WAVESPEED_BASE}/{model}",
-                      headers=ws_headers(key), json=payload, timeout=60)
-    r.raise_for_status()
-    task_id = r.json()["data"]["id"]
-    url = poll(key, task_id)
+    }, timeout=600)
+    url = out["outputs"][0]
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     urllib.request.urlretrieve(url, tmp.name)
     return Path(tmp.name)

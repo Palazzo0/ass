@@ -42,7 +42,7 @@ W, H = 1080, 1920
 FPS = 24
 WAVESPEED_BASE = "https://api.wavespeed.ai/api/v2"
 
-T2I_MODEL = "wavespeed-ai/nano-banana-2-edit"      # Google Nano Banana 2 Edit — hyper-realistic stills
+T2I_MODEL = "google/nano-banana-2/edit"             # Google Nano Banana 2 Edit — hyper-realistic stills
 I2V_MODEL = "wavespeed-ai/wan2.1-i2v-480p"        # Wan 2.1 — animate the stills
 
 # Load .env if present
@@ -541,16 +541,67 @@ def file_to_b64(path: str) -> str:
     with open(path, "rb") as f:
         return f"data:image/{mime};base64," + base64.b64encode(f.read()).decode()
 
+def _make_base_image(scene_id: str) -> Image.Image:
+    """
+    Create a dark base image appropriate for each scene type.
+    google/nano-banana-2/edit transforms this base using the prompt.
+    """
+    base_colors = {
+        "bloodstream":    (60,  8,  8),   # deep blood red
+        "unhealthy_fat":  (18, 12,  6),   # near-black warm
+        "plaque_buildup": (45, 15,  8),   # dark amber-red
+        "sedentary":      ( 8,  8, 12),   # near-black cool
+        "diabetes":       (55, 12,  5),   # dark crimson-orange
+        "blood_pressure": (70, 10,  8),   # dark red
+        "stress":         ( 8,  8, 16),   # dark charcoal-blue
+        "smoking_reveal": ( 6,  6,  6),   # near-black neutral
+        "artery_damage":  (40, 10,  5),   # dark crimson
+    }
+    color = base_colors.get(scene_id, (10, 8, 6))
+    img = Image.new("RGB", (1024, 1820), color)
+    # Add subtle noise texture so the model has something to work with
+    arr = np.array(img).astype(np.int16)
+    noise = np.random.randint(-12, 13, arr.shape, dtype=np.int16)
+    arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr)
+
+def _upload_image(client, img: Image.Image) -> str:
+    """Upload a PIL image and return the WaveSpeed CDN URL."""
+    import io as _io
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    tmp.write(buf.getvalue())
+    tmp.close()
+    try:
+        url = client.upload(tmp.name)
+    finally:
+        os.unlink(tmp.name)
+    return url
+
 def generate_image(key: str, prompt: str, model: str = T2I_MODEL,
-                   size: str = "720*1280") -> Image.Image:
-    """Generate a cinematic still via WaveSpeed T2I SDK."""
+                   scene_id: str = "default", size: str = "720*1280") -> Image.Image:
+    """
+    Generate a cinematic still via google/nano-banana-2/edit.
+    Uploads a dark base image, then edits it into the target scene.
+    """
     import wavespeed
     client = wavespeed.Client(api_key=key)
+
+    base = _make_base_image(scene_id)
+    print(f"    Uploading base image…", flush=True)
+    base_url = _upload_image(client, base)
+
     out = client.run(model, {
-        "prompt": prompt,
-        "size": size,
-        "num_inference_steps": 30,
-        "guidance_scale": 7.5,
+        "images":                [base_url],
+        "prompt":                prompt,
+        "resolution":            "1k",
+        "output_format":         "png",
+        "enable_base64_output":  False,
+        "enable_image_search":   False,
+        "enable_sync_mode":      False,
+        "enable_web_search":     False,
     }, timeout=300)
     url = out["outputs"][0]
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -668,7 +719,7 @@ def main():
             still = Image.open(still_path).convert("RGB")
         else:
             still = generate_image(api_key, scene["t2i_prompt"],
-                                   model=args.t2i_model, size="720*1280")
+                                   model=args.t2i_model, scene_id=sid)
             still = still.resize((W, H), Image.LANCZOS)
             still.save(still_path)
             print(f"  Still saved → {still_path}")

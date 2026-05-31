@@ -599,7 +599,6 @@ def generate_still(key: str, scene: dict, cache_dir: Path, t2i_model: str = T2I_
         }
         task_id = _submit(key, T2I_FALLBACK, payload_fb)
         print(f"    Fallback task ID: {task_id}", flush=True)
-        print(f"    Fallback task ID: {task_id}", flush=True)
         url = _poll(key, task_id, timeout=600)
 
     tmp = _download(url, ".png")
@@ -610,8 +609,65 @@ def generate_still(key: str, scene: dict, cache_dir: Path, t2i_model: str = T2I_
     print(f"    Still saved → {still_path}", flush=True)
     return still
 
+def ken_burns(still: Image.Image, n_frames: int, scene_id: str) -> list:
+    """
+    Cinematic Ken Burns zoom/pan on a still image.
+    Each scene gets a unique movement to avoid repetition.
+    """
+    iw, ih = still.size
+    # Extra canvas so we can zoom in without black borders (20% overshoot)
+    margin = 0.20
+    bw = int(iw * (1 + margin))
+    bh = int(ih * (1 + margin))
+    padded = Image.new("RGB", (bw, bh), (0, 0, 0))
+    padded.paste(still, ((bw - iw) // 2, (bh - ih) // 2))
+
+    # Movement profiles: (start_zoom, end_zoom, pan_dx_frac, pan_dy_frac)
+    moves = {
+        "bloodstream":    (1.12, 1.28, 0.00,  0.04),   # slow push in
+        "unhealthy_fat":  (1.20, 1.08, 0.02,  0.00),   # slow pull back
+        "plaque_buildup": (1.10, 1.25, -0.03, 0.02),   # push + drift
+        "sedentary":      (1.08, 1.18, 0.00, -0.03),   # subtle rise
+        "diabetes":       (1.22, 1.35, 0.03,  0.03),   # push in aggressive
+        "blood_pressure": (1.30, 1.10, 0.00,  0.00),   # pull back reveal
+        "stress":         (1.15, 1.22, -0.02, 0.00),   # slow drift left
+        "smoking_reveal": (1.05, 1.30, 0.00,  0.02),   # dramatic push
+        "artery_damage":  (1.18, 1.28, 0.02, -0.02),   # diagonal push
+    }
+    z0, z1, dx_frac, dy_frac = moves.get(scene_id, (1.10, 1.22, 0.0, 0.0))
+
+    frames = []
+    arr = np.array(padded)
+
+    for i in range(n_frames):
+        t = i / max(n_frames - 1, 1)
+        # Ease-in-out for smooth deceleration
+        te = 3*t**2 - 2*t**3
+        zoom = z0 + (z1 - z0) * te
+
+        # Crop window size at current zoom
+        cw = int(iw / zoom)
+        ch = int(ih / zoom)
+
+        # Center + pan offset
+        cx = bw // 2 + int(dx_frac * bw * te)
+        cy = bh // 2 + int(dy_frac * bh * te)
+
+        x1 = max(0, cx - cw // 2)
+        y1 = max(0, cy - ch // 2)
+        x2 = min(bw, x1 + cw)
+        y2 = min(bh, y1 + ch)
+        # Clamp left/top
+        x1 = max(0, x2 - cw)
+        y1 = max(0, y2 - ch)
+
+        crop = Image.fromarray(arr[y1:y2, x1:x2])
+        frames.append(crop.resize((W, H), Image.LANCZOS))
+
+    return frames
+
 def animate_still(key: str, scene: dict, still: Image.Image, cache_dir: Path, i2v_model: str = I2V_MODEL) -> list:
-    """Animate a still to a video clip; returns list of PIL frames."""
+    """Animate a still: tries WaveSpeed I2V, falls back to Ken Burns."""
     sid = scene["id"]
     clip_path = cache_dir / f"{sid}_clip.mp4"
     dur = scene["end"] - scene["start"]
@@ -623,7 +679,6 @@ def animate_still(key: str, scene: dict, still: Image.Image, cache_dir: Path, i2
 
     print(f"  [{sid}] Animating with {i2v_model}…", flush=True)
     num_frames_api = min(81, max(16, int(dur * 16)))
-    # Resize to 480p (480×832) before base64 — keeps payload small
     still_480 = still.resize((480, 832), Image.LANCZOS)
     payload = {
         "image":                img_to_b64(still_480),
@@ -632,14 +687,17 @@ def animate_still(key: str, scene: dict, still: Image.Image, cache_dir: Path, i2
         "guidance_scale":       6.0,
         "num_inference_steps":  30,
     }
-    task_id = _submit(key, i2v_model, payload)
-    print(f"    Task ID: {task_id}", flush=True)
-    url = _poll(key, task_id, timeout=900)
-
-    tmp = _download(url, ".mp4")
-    shutil.move(str(tmp), str(clip_path))
-    print(f"    Clip saved → {clip_path}", flush=True)
-    return _load_video_frames_chunked(clip_path, n_frames)
+    try:
+        task_id = _submit(key, i2v_model, payload)
+        print(f"    Task ID: {task_id}", flush=True)
+        url = _poll(key, task_id, timeout=900)
+        tmp = _download(url, ".mp4")
+        shutil.move(str(tmp), str(clip_path))
+        print(f"    Clip saved → {clip_path}", flush=True)
+        return _load_video_frames_chunked(clip_path, n_frames)
+    except Exception as e:
+        print(f"    I2V failed ({e}) — using cinematic Ken Burns", flush=True)
+        return ken_burns(still, n_frames, sid)
 
 # ─── MEMORY-SAFE VIDEO READER ─────────────────────────────────────────────────
 def _load_video_frames_chunked(path: Path, target_count: int) -> list:

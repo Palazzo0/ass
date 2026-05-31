@@ -40,7 +40,7 @@ if _env_file.exists():
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 W, H = 1080, 1920
 FPS = 24
-WAVESPEED_BASE = "https://api.wavespeed.ai/api/v2"
+WAVESPEED_BASE = "https://api.wavespeed.ai/api/v3"
 
 ASSETS_DIR = Path("/home/user/ass")
 
@@ -650,7 +650,7 @@ def submit_i2v(api_key: str, image_path: str, prompt: str, duration_sec: int) ->
         "num_inference_steps": 30,
     }
     r = requests.post(
-        f"{WAVESPEED_BASE}/wavespeed-ai/wan2.1-i2v-480p",
+        f"{WAVESPEED_BASE}/wavespeed-ai/wan-2.1/i2v-480p",
         headers=ws_headers(api_key),
         json=payload,
         timeout=60,
@@ -669,7 +669,7 @@ def submit_t2v(api_key: str, prompt: str, duration_sec: int) -> str:
         "size": "480*832",
     }
     r = requests.post(
-        f"{WAVESPEED_BASE}/wavespeed-ai/wan2.1-t2v-480p",
+        f"{WAVESPEED_BASE}/wavespeed-ai/wan-2.1/t2v-480p",
         headers=ws_headers(api_key),
         json=payload,
         timeout=60,
@@ -683,7 +683,7 @@ def poll_task(api_key: str, task_id: str, timeout: int = 600) -> str:
     interval = 3
     while time.time() < deadline:
         r = requests.get(
-            f"{WAVESPEED_BASE}/predictions/{task_id}/fetch",
+            f"{WAVESPEED_BASE}/predictions/{task_id}/result",
             headers=ws_headers(api_key),
             timeout=30,
         )
